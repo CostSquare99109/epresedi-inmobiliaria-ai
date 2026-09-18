@@ -7,7 +7,6 @@ import httpx
 import pytest
 
 from app.api import routes
-from app.core.settings import get_settings
 
 
 @pytest.fixture
@@ -15,10 +14,6 @@ async def client():
     transport = httpx.ASGITransport(app=routes.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
-
-
-def _admin_headers() -> dict:
-    return {"X-Admin-Token": get_settings().ADMIN_TOKEN}
 
 
 # ------------------------------------------------------------------- health
@@ -56,13 +51,19 @@ async def test_property_crud_requires_admin(client):
     assert r.status_code == 401  # no token
     r = await client.post(
         "/properties", json={"title": "X", "property_type": "casa", "price": 1},
-        headers={"X-Admin-Token": "wrong-token"},
+        headers={"Authorization": "Bearer invalido.simulado"},
+    )
+    assert r.status_code == 401
+    # El antiguo X-Admin-Token ya no autoriza: el JWT es la única autoridad.
+    r = await client.post(
+        "/properties", json={"title": "X", "property_type": "casa", "price": 1},
+        headers={"X-Admin-Token": "cualquier-token-estatico"},
     )
     assert r.status_code == 401
 
 
-async def test_property_create_patch_delete(client):
-    headers = _admin_headers()
+async def test_property_create_patch_delete(client, admin_token):
+    headers = admin_token()
     r = await client.post(
         "/properties",
         json={
@@ -88,11 +89,11 @@ async def test_property_create_patch_delete(client):
     assert r.status_code == 404
 
 
-async def test_property_create_rejects_invalid_type(client):
+async def test_property_create_rejects_invalid_type(client, admin_token):
     r = await client.post(
         "/properties",
         json={"title": "X", "property_type": "nave-espacial", "price": 1},
-        headers=_admin_headers(),
+        headers=admin_token(),
     )
     assert r.status_code == 422
 
@@ -105,13 +106,15 @@ async def test_document_upload_requires_admin(client):
     assert r.status_code == 401
 
 
-async def test_document_upload_process_delete(client):
-    headers = _admin_headers()
+async def test_document_upload_process_delete(client, admin_token):
+    headers = admin_token()
+    # Use unique content to avoid deduplication
+    unique_id = uuid_mod.uuid4().hex[:8]
     content = (
-        "Doc API de prueba.\n\n"
-        "El Proyecto API-Test cuenta con 55 apartamentos de prueba."
+        f"Doc API de prueba {unique_id}.\n\n"
+        f"El Proyecto API-Test cuenta con 55 apartamentos de prueba."
     ).encode("utf-8")
-    fname = f"api_test_{uuid_mod.uuid4().hex[:8]}.txt"
+    fname = f"api_test_{unique_id}.txt"
     r = await client.post(
         "/documents", files={"file": (fname, content, "text/plain")},
         data={"title": "Doc API", "document_type": "general"}, headers=headers,
@@ -135,10 +138,10 @@ async def test_document_upload_process_delete(client):
     assert r.status_code == 200
 
 
-async def test_document_upload_rejects_bad_extension(client):
+async def test_document_upload_rejects_bad_extension(client, admin_token):
     r = await client.post(
         "/documents", files={"file": ("virus.exe", b"MZ", "application/octet-stream")},
-        headers=_admin_headers(),
+        headers=admin_token(),
     )
     assert r.status_code == 422
 
@@ -149,6 +152,9 @@ async def test_conversations_and_leads_require_admin(client):
     assert (await client.get("/conversations")).status_code == 401
     assert (await client.get("/appointments")).status_code == 401
     assert (await client.get("/ai-events")).status_code == 401
+    assert (await client.get("/audit-log")).status_code == 401
+    assert (await client.get("/admin-users")).status_code == 401
+    assert (await client.get("/settings")).status_code == 401
 
 
 async def test_images_endpoint_blocks_traversal(client):

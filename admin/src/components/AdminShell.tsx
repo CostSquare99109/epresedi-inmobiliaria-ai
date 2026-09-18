@@ -3,12 +3,15 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { logoutAction } from "@/app/actions/auth";
 import { Icon, type IconName } from "./icons";
+import { ActionToast, type Feedback } from "@/components/ActionToast";
 
 interface NavItem {
   href: string;
   label: string;
   icon: IconName;
+  permission?: string;
 }
 
 const GROUPS: { label: string; items: NavItem[] }[] = [
@@ -20,6 +23,7 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
     label: "Operación",
     items: [
       { href: "/propiedades", label: "Propiedades", icon: "building" },
+      { href: "/proyectos", label: "Proyectos", icon: "folder" },
       { href: "/citas", label: "Citas", icon: "calendar" },
     ],
   },
@@ -35,19 +39,27 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { href: "/documentos", label: "Documentos · RAG", icon: "file" },
       { href: "/logs", label: "Logs IA", icon: "list" },
+      { href: "/auditoria", label: "Auditoría", icon: "shield" },
+      { href: "/contenido", label: "Contenido CMS", icon: "edit" },
+      { href: "/configuracion", label: "Configuración", icon: "settings" },
+      { href: "/usuarios", label: "Usuarios", icon: "users", permission: "users.manage" },
     ],
   },
 ];
 
-/** Breadcrumb estático por ruta (contexto de navegación, sin datos dinámicos). */
 const CRUMBS: Record<string, { group: string; page: string }> = {
   "/": { group: "General", page: "Panel general" },
   "/propiedades": { group: "Operación", page: "Propiedades" },
+  "/proyectos": { group: "Operación", page: "Proyectos" },
   "/citas": { group: "Operación", page: "Citas" },
   "/leads": { group: "Comercial", page: "Leads" },
   "/conversaciones": { group: "Comercial", page: "Conversaciones" },
   "/documentos": { group: "Sistema", page: "Documentos · RAG" },
   "/logs": { group: "Sistema", page: "Logs IA" },
+  "/auditoria": { group: "Sistema", page: "Auditoría" },
+  "/contenido": { group: "Sistema", page: "Contenido CMS" },
+  "/configuracion": { group: "Sistema", page: "Configuración" },
+  "/usuarios": { group: "Sistema", page: "Usuarios" },
 };
 
 function isActive(pathname: string, href: string): boolean {
@@ -58,6 +70,9 @@ function isActive(pathname: string, href: string): boolean {
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [user, setUser] = useState<{ name: string; email: string; role: string } | null>(null);
+  const [loadingUser, setLoadingUser] = useState(true);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
 
   useEffect(() => {
     setOpen(false);
@@ -72,10 +87,42 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  useEffect(() => {
+    async function loadUser() {
+      try {
+        const res = await fetch("/api/proxy/auth/me", { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          setUser(data.user);
+        } else {
+          setUser(null);
+        }
+      } catch {
+        setUser(null);
+      } finally {
+        setLoadingUser(false);
+      }
+    }
+    loadUser();
+  }, []);
+
+  const handleLogout = async () => {
+    setFeedback({ tone: "ok", message: "Cerrando sesión..." });
+    try {
+      await logoutAction();
+      setUser(null);
+      setFeedback({ tone: "ok", message: "Sesión cerrada" });
+      setTimeout(() => window.location.href = "/login", 1000);
+    } catch (e) {
+      setFeedback({ tone: "error", message: "Error cerrando sesión" });
+    }
+  };
+
   const crumb = CRUMBS[pathname] ?? null;
 
   return (
     <div className="shell">
+      <ActionToast feedback={feedback} onClose={() => setFeedback(null)} />
       <a href="#main" className="skip-link">
         Saltar al contenido
       </a>
@@ -116,8 +163,36 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
           ))}
         </nav>
         <div className="side-foot">
-          <b>Panel interno</b>
-          <span>Uso administrativo · datos locales</span>
+          {loadingUser ? (
+            <div className="user-info-loading">Cargando...</div>
+          ) : user ? (
+            <div className="user-info">
+              <div className="user-avatar" aria-hidden="true">
+                <Icon name="user" size={16} />
+              </div>
+              <div className="user-details">
+                <span className="user-name">{user.name}</span>
+                <span className="user-role">{user.role}</span>
+              </div>
+              <button
+                type="button"
+                className="btn-logout"
+                onClick={handleLogout}
+                disabled={loadingUser}
+                aria-label="Cerrar sesión"
+              >
+                <Icon name="log-out" size={14} />
+              </button>
+            </div>
+          ) : (
+            <div className="user-info-empty">
+              <span>No autenticado</span>
+              <Link href="/login" className="btn btn-sm btn-secondary">
+                <Icon name="log-in" size={12} />
+                Entrar
+              </Link>
+            </div>
+          )}
         </div>
       </aside>
       <div className="main-col">

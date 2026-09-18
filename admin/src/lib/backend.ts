@@ -1,18 +1,59 @@
-/** Server-side client for the internal API. Injects X-Admin-Token from env. */
+/** Server-side client for the internal API. Uses JWT from cookies (Server Actions) or service token fallback. */
 
-export function adminHeaders(): HeadersInit {
-  const token = process.env.ADMIN_TOKEN ?? "";
-  return { "X-Admin-Token": token, "Content-Type": "application/json" };
-}
+import { cookies } from "next/headers";
+import type {
+  PropertyDTO,
+  DocumentDTO,
+  LeadDTO,
+  AppointmentDTO,
+  AiEventDTO,
+  ConversationDTO,
+  HealthDTO,
+  ProjectDTO,
+  AdminUserDTO,
+  AuditLogDTO,
+  CmsContentDTO,
+  SystemSettingDTO,
+} from "./types";
+
+export type {
+  PropertyDTO,
+  DocumentDTO,
+  LeadDTO,
+  AppointmentDTO,
+  AiEventDTO,
+  ConversationDTO,
+  HealthDTO,
+  ProjectDTO,
+  AdminUserDTO,
+  AuditLogDTO,
+  CmsContentDTO,
+  SystemSettingDTO,
+};
 
 export function apiBaseUrl(): string {
   return (process.env.API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 }
 
+async function getAuthHeaders(): Promise<HeadersInit> {
+  const cookieStore = await cookies();
+  const accessToken = cookieStore.get("admin_access_token")?.value;
+  const serviceToken = process.env.ADMIN_SERVICE_TOKEN ?? "";
+
+  if (accessToken) {
+    return { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" };
+  }
+  if (serviceToken) {
+    return { "X-Admin-Token": serviceToken, "Content-Type": "application/json" };
+  }
+  return { "Content-Type": "application/json" };
+}
+
 export async function backend<T>(path: string, init?: RequestInit): Promise<T> {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${apiBaseUrl()}${path}`, {
     ...init,
-    headers: { ...adminHeaders(), ...(init?.headers ?? {}) },
+    headers: { ...authHeaders, ...(init?.headers ?? {}) },
     cache: "no-store",
   });
   if (!res.ok) {
@@ -20,78 +61,4 @@ export async function backend<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`API ${res.status} en ${path}: ${detail.slice(0, 200)}`);
   }
   return (await res.json()) as T;
-}
-
-export interface PropertyDTO {
-  id: string;
-  code: string;
-  title: string;
-  property_type: string;
-  operation: string;
-  price: number;
-  currency: string;
-  city: string;
-  neighborhood: string;
-  area_m2: number | null;
-  bedrooms: number | null;
-  bathrooms: number | null;
-  parking_spaces: number | null;
-  status: string;
-  features: string[];
-  project: string | null;
-}
-
-export interface DocumentDTO {
-  id: string;
-  title: string;
-  filename: string;
-  document_type: string;
-  status: string;
-  version: number;
-  chunk_count: number;
-  error: string;
-  processed_at: string | null;
-}
-
-export interface LeadDTO {
-  id: string;
-  user_id: number;
-  name: string;
-  phone: string;
-  status: string;
-  budget: number | null;
-  created_at: string;
-}
-
-export interface AppointmentDTO {
-  id: string;
-  property_id: string;
-  lead_id: string | null;
-  scheduled_at: string;
-  status: string;
-}
-
-export interface AiEventDTO {
-  id: number;
-  request_id: string;
-  user_id: number | null;
-  intent: string;
-  model: string;
-  tools: { tool: string; ok: boolean }[];
-  latency_ms: number;
-  status: string;
-  created_at: string;
-}
-
-export interface ConversationDTO {
-  id: string;
-  user_id: number;
-  summary: string;
-  recent: { role: string; content: string }[];
-}
-
-export interface HealthDTO {
-  ok: boolean;
-  checks: Record<string, boolean>;
-  errors: Record<string, string>;
 }

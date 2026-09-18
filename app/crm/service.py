@@ -99,6 +99,17 @@ async def update_lead(session: AsyncSession, lead_id: uuid_mod.UUID, data: dict)
         lead.status = LeadStatus(data["status"])
     if data.get("preferences") is not None and isinstance(data["preferences"], dict):
         lead.preferences = {**(lead.preferences or {}), **data["preferences"]}
+    if "assigned_admin_id" in data:
+        raw = data["assigned_admin_id"]
+        if raw is None or raw == "":
+            lead.assigned_admin_id = None
+        else:
+            from app.database.models import AdminUser
+
+            admin = await session.get(AdminUser, uuid_mod.UUID(str(raw)))
+            if admin is None:
+                raise ValueError("Asesor no encontrado")
+            lead.assigned_admin_id = admin.id
     await session.flush()
     return lead
 

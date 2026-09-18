@@ -107,6 +107,133 @@ class AppointmentStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+class AdminRole(StrEnum):
+    SUPERADMIN = "superadmin"
+    ADMIN = "admin"
+    EDITOR = "editor"
+    ASESOR = "asesor"
+
+
+# ----------------------------------------------------------------- Admin
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+    name: Mapped[str] = mapped_column(String(160))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[AdminRole] = mapped_column(sa_enum(AdminRole), default=AdminRole.ASESOR)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=utcnow
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "email": self.email,
+            "name": self.name,
+            "role": self.role.value,
+            "is_active": self.is_active,
+            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
+        }
+
+
+class AdminAuditLog(Base):
+    __tablename__ = "admin_audit_log"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    admin_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(64))
+    entity: Mapped[str] = mapped_column(String(64))
+    entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    audit_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[str] = mapped_column(String(16), default="success")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CmsContentType(StrEnum):
+    TEXT = "text"
+    HTML = "html"
+    JSON = "json"
+    IMAGE = "image"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+
+
+class CmsContent(Base):
+    __tablename__ = "cms_content"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    key: Mapped[str] = mapped_column(String(100), unique=True)
+    type: Mapped[CmsContentType] = mapped_column(sa_enum(CmsContentType))
+    value: Mapped[str] = mapped_column(Text, default="")
+    label: Mapped[str] = mapped_column(String(200), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    group: Mapped[str] = mapped_column(String(50), default="general")
+    is_public: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=utcnow
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "key": self.key,
+            "type": self.type.value,
+            "value": self.value,
+            "label": self.label,
+            "description": self.description,
+            "group": self.group,
+            "is_public": self.is_public,
+        }
+
+
+class SystemSettingType(StrEnum):
+    TEXT = "text"
+    HTML = "html"
+    JSON = "json"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+
+
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    key: Mapped[str] = mapped_column(String(100), unique=True)
+    type: Mapped[SystemSettingType] = mapped_column(sa_enum(SystemSettingType))
+    value: Mapped[str] = mapped_column(Text, default="")
+    label: Mapped[str] = mapped_column(String(200), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    category: Mapped[str] = mapped_column(String(50), default="general")
+    is_editable: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=utcnow
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "key": self.key,
+            "type": self.type.value,
+            "value": self.value,
+            "label": self.label,
+            "description": self.description,
+            "category": self.category,
+            "is_editable": self.is_editable,
+        }
+
+
 # ----------------------------------------------------------------- inventory
 class Project(Base):
     __tablename__ = "projects"
@@ -179,6 +306,14 @@ class Property(Base):
     project: Mapped[Project | None] = relationship(back_populates="properties", lazy="selectin")
 
     def to_dict(self) -> dict:
+        project_name = None
+        # Safely access project.name without triggering lazy load on detached instances
+        try:
+            if self.project is not None:
+                project_name = self.project.name
+        except Exception:
+            # DetachedInstanceError or similar - project not loaded and session closed
+            pass
         return {
             "id": str(self.id),
             "code": self.code,
@@ -196,7 +331,7 @@ class Property(Base):
             "parking_spaces": self.parking_spaces,
             "status": self.status.value,
             "features": self.features or [],
-            "project": self.project.name if self.project else None,
+            "project": project_name,
             "latitude": float(self.latitude) if self.latitude is not None else None,
             "longitude": float(self.longitude) if self.longitude is not None else None,
         }
@@ -410,7 +545,24 @@ class Lead(Base):
     budget: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     preferences: Mapped[dict] = mapped_column(JSONB, default=dict)
     notes: Mapped[str] = mapped_column(Text, default="")
+    assigned_admin_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("admin_users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=utcnow
+    )
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[object] = mapped_column(JSONB, default=dict)
+    description: Mapped[str] = mapped_column(String(240), default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=utcnow
     )

@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # timezone
     TZ: str = "America/Bogota"
 
+    # jwt
+    JWT_SECRET: str = "changeme-jwt-secret"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+
     # --- derived helpers -------------------------------------------------
     @property
     def storage_dir(self) -> Path:

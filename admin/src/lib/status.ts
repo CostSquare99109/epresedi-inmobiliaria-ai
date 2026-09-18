@@ -83,3 +83,20 @@ const OPERATION_LABELS: Record<string, string> = {
 export function operationLabel(operation: string): string {
   return OPERATION_LABELS[operation] ?? operation;
 }
+
+export const LEAD_STATUSES = [
+  { value: "NEW", label: "Nuevo" },
+  { value: "CONTACTED", label: "Contactado" },
+  { value: "INTERESTED", label: "Interesado" },
+  { value: "VISIT_SCHEDULED", label: "Visita agendada" },
+  { value: "NEGOTIATION", label: "Negociación" },
+  { value: "CLOSED", label: "Cerrado" },
+  { value: "LOST", label: "Perdido" },
+] as const;
+
+export const APPOINTMENT_STATUSES = [
+  "REQUESTED",
+  "CONFIRMED",
+  "CANCELLED",
+  "COMPLETED",
+] as const;

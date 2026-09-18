@@ -16,3 +16,7 @@ node_modules/
 .next/
 admin/.env.local
 *.log
+# Artefactos de runtime local
+pgdata/
+dump.rdb
+=3.3

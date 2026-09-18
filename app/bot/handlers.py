@@ -209,7 +209,7 @@ async def cmd_citas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     lines = ["Tus citas:"]
     for a in items:
-        local_time = to_business_time(a.scheduled_at)
+        local_time = await to_business_time(a.scheduled_at)
         lines.append(f"• {local_time:%a %d %b %H:%M} — {a.status.value}")
     await update.effective_message.reply_text("\n".join(lines))
 

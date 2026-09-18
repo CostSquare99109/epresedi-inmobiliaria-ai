@@ -12,3 +12,4 @@ python-telegram-bot>=22
 pypdf>=4
 python-docx>=1.1
 pytest>=8
+python-jose[cryptography]>=3.3

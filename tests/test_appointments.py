@@ -33,7 +33,7 @@ def _next_weekday_slot() -> dt.datetime:
         day = (now + dt.timedelta(days=offset)).date()
         if day.weekday() >= 6:
             continue
-        for hour in appts.SLOT_HOURS:
+        for hour in (9, 10, 11, 14, 15, 16, 17):
             start = dt.datetime(day.year, day.month, day.day, hour, 0, tzinfo=dt.timezone.utc)
             if start > now + dt.timedelta(hours=2):
                 return start
@@ -114,5 +114,5 @@ async def test_slots_include_local_datetime_for_callbacks(session, user_id):
     assert slots
     for s in slots:
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", s["datetime_local"])
-        local = appts.to_business_time(dt.datetime.fromisoformat(s["datetime"]))
+        local = await appts.to_business_time(dt.datetime.fromisoformat(s["datetime"]))
         assert s["datetime_local"] == local.strftime("%Y-%m-%dT%H:%M")

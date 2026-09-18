@@ -505,6 +505,63 @@ a {
   background: var(--surface-2);
 }
 
+/* Button sizes */
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+  min-height: 28px;
+}
+
+.btn-lg {
+  padding: 10px 20px;
+  font-size: 14px;
+  min-height: 42px;
+}
+
+/* Button loading state */
+.btn-loading {
+  position: relative;
+  color: transparent;
+  pointer-events: none;
+}
+
+.btn-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+
+.btn-spinner::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Button icon positioning */
+.btn-icon-left,
+.btn-icon-right {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.btn-text {
+  display: inline-flex;
+  align-items: center;
+}
+
 select,
 input[type="text"],
 input[type="search"] {
@@ -538,6 +595,64 @@ input[type="search"]:focus-visible {
   padding: 4px 8px;
   min-height: 28px;
   font-size: 12.5px;
+}
+
+/* Input component wrapper (used by Input.tsx) */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.form-label {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.form-input {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  min-height: 34px;
+  transition: border-color var(--t) var(--ease),
+    box-shadow var(--t) var(--ease);
+}
+
+.form-input:hover {
+  border-color: #a3a89b;
+}
+
+.form-input:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  outline: none;
+}
+
+.form-field.has-error .form-input {
+  border-color: var(--danger);
+}
+
+.form-field.has-error .form-input:focus-visible {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.form-error {
+  font-size: var(--fs-caption);
+  color: var(--danger);
+  margin: 0;
+}
+
+.form-hint {
+  font-size: var(--fs-caption);
+  color: var(--muted);
+  margin: 0;
 }
 
 /* ------------------------------------------------------------
@@ -1030,6 +1145,66 @@ a.stat-card:hover {
   color: var(--primary);
 }
 
+/* View Switcher - Segmented Control */
+.toolbar-view {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.view-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px;
+}
+
+.view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-small);
+  font-weight: 550;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  white-space: nowrap;
+  min-width: 44px;
+  min-height: 36px;
+  transition: background-color var(--t) var(--ease),
+    color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+}
+
+.view-btn:hover {
+  color: var(--fg);
+  background: var(--surface);
+}
+
+.view-btn.active {
+  background: var(--surface);
+  color: var(--fg);
+  font-weight: 600;
+  box-shadow: var(--shadow-1);
+}
+
+.view-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.view-btn svg {
+  flex-shrink: 0;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -1117,6 +1292,31 @@ a.stat-card:hover {
 .page-btn.disabled {
   opacity: 0.45;
   pointer-events: none;
+}
+
+/* Paginación móvil simplificada */
+@media (max-width: 599px) {
+  .pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-3);
+  }
+  
+  .pagination .page-info {
+    text-align: center;
+    order: 1;
+  }
+  
+  .pagination .page-btns {
+    justify-content: center;
+    order: 2;
+  }
+  
+  .page-btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: var(--sp-2) var(--sp-3);
+  }
 }
 
 /* ------------------------------------------------------------
@@ -1217,6 +1417,73 @@ td .cell-sub {
 }
 
 /* ------------------------------------------------------------
+   13.5. Tabla de propiedades - Columna Acciones sticky
+   ------------------------------------------------------------ */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-small);
+}
+
+/* Columna de acciones sticky */
+th.actions-col,
+td.actions-col {
+  position: sticky;
+  right: 0;
+  background: var(--surface);
+  z-index: 2;
+  box-shadow: -4px 0 8px -2px rgba(29, 32, 28, 0.08);
+  border-left: 1px solid var(--border);
+}
+
+th.actions-col {
+  border-bottom: 1px solid var(--border);
+  box-shadow: -4px 0 8px -2px rgba(29, 32, 28, 0.08), 0 1px 0 var(--border);
+}
+
+td.actions-col {
+  padding: var(--sp-2) var(--sp-3);
+  white-space: nowrap;
+}
+
+.table-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.table-actions .btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
+}
+
+/* Truncado de título en tabla */
+td .cell-main {
+  font-weight: 550;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  td .cell-main {
+    max-width: 140px;
+  }
+}
+
+/* Row hover no afecta columna sticky */
+tbody tr:hover td.actions-col {
+  background: var(--surface);
+}
+
+/* ------------------------------------------------------------
    14. Tarjetas de propiedad (dashboard)
    ------------------------------------------------------------ */
 .prop-grid {
@@ -1310,6 +1577,195 @@ td .cell-sub {
 .prop-status {
   margin-top: var(--sp-1);
   align-self: flex-start;
+}
+
+/* ------------------------------------------------------------
+   14.5. Tarjetas de propiedad - Vista de listado (cards-grid)
+   ------------------------------------------------------------ */
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--sp-4);
+  padding: var(--sp-2) var(--sp-5) var(--sp-5);
+}
+
+@media (max-width: 599px) {
+  .cards-grid {
+    grid-template-columns: 1fr;
+    padding: var(--sp-2) var(--sp-3) var(--sp-5);
+  }
+}
+
+.property-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+  transition: border-color var(--t) var(--ease),
+    box-shadow var(--t) var(--ease);
+}
+
+.property-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-2);
+}
+
+/* Imagen con aspect-ratio 16:9 */
+.card-image {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.card-image .thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--idle);
+}
+
+/* Badge de estado sobre la imagen (top-right) */
+.card-status-overlay {
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  z-index: 3;
+}
+
+.card-status-overlay .badge {
+  box-shadow: var(--shadow-2);
+}
+
+/* Contenido de la tarjeta */
+.card-content {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-4);
+  gap: var(--sp-2);
+  flex: 1;
+}
+
+/* Título principal */
+.card-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.35;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Código y ubicación (secundario) */
+.card-code {
+  font-size: var(--fs-caption);
+  color: var(--muted);
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  align-items: center;
+}
+
+.card-code .sep {
+  color: var(--border-strong);
+}
+
+/* Metadatos: tipo y operación */
+.card-meta {
+  font-size: var(--fs-small);
+  color: var(--muted);
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.card-meta .sep {
+  color: var(--border-strong);
+}
+
+/* Precio - jerarquía principal */
+.card-price {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--primary);
+  line-height: 1.2;
+  margin: var(--sp-1) 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Características (m², hab, baños, parking) con iconos y labels */
+.card-features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-top: var(--sp-1);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.card-feature {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-small);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-feature svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* Acciones inferiores */
+.card-actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.card-actions .btn {
+  flex: 1;
+  min-height: 44px;
+  justify-content: center;
+}
+
+.card-actions .btn-secondary {
+  border-color: var(--border-strong);
+}
+
+.card-actions .btn-primary {
+  background: var(--primary);
+}
+
+@media (max-width: 599px) {
+  .card-actions {
+    flex-direction: column;
+  }
+  
+  .card-actions .btn {
+    width: 100%;
+  }
 }
 
 /* ------------------------------------------------------------
@@ -1993,6 +2449,161 @@ td .cell-sub {
 
   .sidebar {
     transition: none;
+  }
+}
+
+/* ------------------------------------------------------------
+   22.5. Login page
+   ------------------------------------------------------------ */
+.login-page {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-5) var(--sp-4);
+}
+
+.login-main {
+  width: 100%;
+  max-width: 400px;
+}
+
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  padding: var(--sp-6) var(--sp-5);
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: var(--sp-6);
+}
+
+.login-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.login-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.login-brand-text {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.login-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  color: var(--fg);
+}
+
+.login-subtitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.login-heading {
+  font-size: var(--fs-h2);
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+  color: var(--fg);
+  margin-bottom: var(--sp-1);
+}
+
+.login-description {
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.login-form .form-field {
+  margin: 0;
+}
+
+.login-submit {
+  margin-top: var(--sp-2);
+}
+
+.login-footer {
+  margin-top: var(--sp-6);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.login-footer p {
+  font-size: var(--fs-caption);
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+/* Responsive adjustments for login */
+@media (max-width: 480px) {
+  .login-page {
+    padding: var(--sp-4) var(--sp-3);
+    align-items: flex-start;
+    min-height: 100dvh;
+  }
+
+  .login-card {
+    padding: var(--sp-5) var(--sp-4);
+    border-radius: var(--radius);
+    box-shadow: none;
+    border: none;
+    background: transparent;
+  }
+
+  .login-main {
+    max-width: none;
+  }
+
+  .login-header {
+    margin-bottom: var(--sp-5);
+  }
+
+  .login-title {
+    font-size: 16.5px;
+  }
+
+  .login-heading {
+    font-size: 15.5px;
+  }
+
+  .login-form {
+    gap: var(--sp-3);
+  }
+
+  .login-footer {
+    margin-top: var(--sp-5);
+    padding-top: var(--sp-3);
+    border-top: none;
   }
 }
 

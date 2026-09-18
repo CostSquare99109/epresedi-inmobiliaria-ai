@@ -730,7 +730,7 @@ class Orchestrator:
                 return AgentReply(
                     text=(
                         f"📅 Visita solicitada para **{appt['property']}** ({appt['code']})\n"
-                        f"Fecha: {to_business_time(dt.datetime.fromisoformat(appt['scheduled_at'])).strftime('%a %d %b %Y %H:%M')}\nEstado: pendiente de confirmación."
+                        f"Fecha: {(await to_business_time(dt.datetime.fromisoformat(appt['scheduled_at']))).strftime('%a %d %b %Y %H:%M')}\nEstado: pendiente de confirmación."
                     ),
                     intent=Intent.SCHEDULE_VISIT,
                     actions=[("cancel_appt", appt["id"])],
@@ -1123,7 +1123,7 @@ class Orchestrator:
             ctx.state["last_appointment_id"] = appt["id"]
             return AgentReply(
                 text=(f"📅 Visita solicitada: {appt['property']} — "
-                      f"{to_business_time(dt.datetime.fromisoformat(appt['scheduled_at'])).strftime('%a %d %b %H:%M')} (pendiente de confirmación)."),
+                      f"{(await to_business_time(dt.datetime.fromisoformat(appt['scheduled_at']))).strftime('%a %d %b %H:%M')} (pendiente de confirmación)."),
                 intent=Intent.SCHEDULE_VISIT, actions=[("cancel_appt", appt["id"])],
             )
         return AgentReply(text=f"⚠️ {res.get('error', 'No se pudo agendar.')}", intent=Intent.SCHEDULE_VISIT)

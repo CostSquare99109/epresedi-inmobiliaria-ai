@@ -35,7 +35,10 @@ async def get_property(session: AsyncSession, property_id) -> Property | None:
         pid = property_id if isinstance(property_id, uuid_mod.UUID) else uuid_mod.UUID(str(property_id))
     except (ValueError, AttributeError):
         return None
-    return (await session.execute(select(Property).where(Property.id == pid))).scalar_one_or_none()
+    from sqlalchemy.orm import selectinload
+    return (await session.execute(
+        select(Property).options(selectinload(Property.project)).where(Property.id == pid)
+    )).scalar_one_or_none()
 
 
 async def get_property_by_code(session: AsyncSession, code: str) -> Property | None:
@@ -221,4 +224,61 @@ async def find_property_by_text(
 async def count_by_status(session: AsyncSession) -> dict[str, int]:
     rows = (await session.execute(select(Property.status, func.count()).group_by(Property.status))).all()
     return {status.value: n for status, n in rows}
+
+
+async def list_properties_admin(
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    city: str | None = None,
+    q: str | None = None,
+    property_type: str | None = None,
+    operation: str | None = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+    project_id: str | None = None,
+    limit: int = 12,
+    offset: int = 0,
+) -> tuple[list[Property], int]:
+    """Admin inventory listing: combined filters + real total count.
+
+    `q` searches the computed search_vector (FTS, sanitized via
+    plainto_tsquery) with ilike fallbacks for title/code partial matches.
+    """
+    from sqlalchemy import or_
+
+    conds = []
+    if status:
+        conds.append(Property.status == status)
+    if city:
+        conds.append(Property.city.ilike(f"%{city}%"))
+    if property_type:
+        conds.append(Property.property_type == property_type)
+    if operation:
+        conds.append(Property.operation == operation)
+    if min_price is not None:
+        conds.append(Property.price >= min_price)
+    if max_price is not None:
+        conds.append(Property.price <= max_price)
+    if project_id:
+        try:
+            conds.append(Property.project_id == uuid_mod.UUID(str(project_id)))
+        except ValueError:
+            return [], 0
+    if q and q.strip():
+        needle = q.strip()
+        conds.append(or_(
+            Property.search_vector.op("@@")(func.plainto_tsquery("spanish", needle)),
+            Property.title.ilike(f"%{needle}%"),
+            Property.code.ilike(f"%{needle}%"),
+        ))
+    stmt = select(Property)
+    count_stmt = select(func.count()).select_from(Property)
+    if conds:
+        stmt = stmt.where(*conds)
+        count_stmt = count_stmt.where(*conds)
+    total = (await session.execute(count_stmt)).scalar() or 0
+    stmt = stmt.order_by(Property.created_at.desc()).limit(min(limit, 200)).offset(offset)
+    props = (await session.execute(stmt)).scalars().all()
+    return props, total
 

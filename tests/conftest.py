@@ -102,7 +102,33 @@ def prepared_db():
     from scripts.seed import seed
 
     asyncio.run(seed())
+    _ensure_admin_users()
     yield
+
+
+def _ensure_admin_users() -> None:
+    """RBAC test users: one per role, password known (test suite only)."""
+    from sqlalchemy import select
+
+    from app.database.models import AdminRole, AdminUser
+    from app.security.auth import hash_password
+
+    async def _create() -> None:
+        async with AsyncSessionLocal() as s:
+            for role in AdminRole:
+                email = f"{role.value}@test.local"
+                existing = (await s.execute(
+                    select(AdminUser).where(AdminUser.email == email)
+                )).scalar_one_or_none()
+                if existing is None:
+                    s.add(AdminUser(
+                        email=email, name=f"Test {role.value}",
+                        password_hash=hash_password("test-password-123"),
+                        role=role,
+                    ))
+            await s.commit()
+
+    asyncio.run(_create())
 
 
 # ------------------------------------------------------------------- fixtures
@@ -122,6 +148,34 @@ async def session(prepared_db):
 
 
 _counter = itertools.count(1)
+
+
+@pytest.fixture(scope="session")
+def admin_users():
+    """RBAC test users keyed by role value (created by prepared_db)."""
+    from sqlalchemy import select
+
+    from app.database.models import AdminRole, AdminUser
+
+    async def _load() -> dict[str, AdminUser]:
+        async with AsyncSessionLocal() as s:
+            rows = (await s.execute(select(AdminUser))).scalars().all()
+            return {u.role.value: u for u in rows}
+
+    return asyncio.run(_load())
+
+
+@pytest.fixture
+def admin_token(admin_users):
+    """Bearer auth headers for an admin role: admin_token('superadmin')."""
+    from app.security.auth import create_access_token
+
+    def _token(role: str = "superadmin") -> dict[str, str]:
+        u = admin_users[role]
+        claims = {"sub": str(u.id), "email": u.email, "role": u.role.value, "name": u.name}
+        return {"Authorization": f"Bearer {create_access_token(claims)}"}
+
+    return _token
 
 
 @pytest.fixture
