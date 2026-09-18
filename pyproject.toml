@@ -1,0 +1,13 @@
+[project]
+name = "inmobiliaria-ai"
+version = "0.1.0"
+description = "Asistente inmobiliario conversacional (Telegram + RAG + NVIDIA Build) local-first"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 110

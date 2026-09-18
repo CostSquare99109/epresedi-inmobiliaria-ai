@@ -1,0 +1,18 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+storage/
+!storage/.gitkeep
+# Artefactos del seed de desarrollo y de la suite de tests (no son datos reales)
+documents/**
+!documents/**/.gitkeep
+documents_test/
+storage_test/
+*.tsbuildinfo
+node_modules/
+.next/
+admin/.env.local
+*.log

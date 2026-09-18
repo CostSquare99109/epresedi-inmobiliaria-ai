@@ -1,0 +1,14 @@
+python-dotenv
+psycopg[binary,pool]>=3.2
+SQLAlchemy>=2.0
+alembic
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+httpx
+redis>=5.0
+python-telegram-bot>=22
+pypdf>=4
+python-docx>=1.1
+pytest>=8
