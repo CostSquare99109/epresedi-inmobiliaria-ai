@@ -4,6 +4,7 @@ Numeric criteria are ALWAYS resolved deterministically here (never by the LLM).
 """
 from __future__ import annotations
 
+import copy
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -26,7 +27,7 @@ TYPE_WORDS = {
     "apartamentos": "apartamento", "lote": "lote", "lotecito": "lote", "terreno": "lote",
     "terrenos": "lote", "local": "local", "locales": "local", "oficina": "oficina",
     "oficinas": "oficina", "finca": "finca", "fincas": "finca", "proyecto": "proyecto",
-    "proyectos": "proyecto",
+    "proyectos": "proyecto", "aptos": "apartamento",
 }
 
 
@@ -64,7 +65,7 @@ class SearchFilters:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "SearchFilters":
+    def from_dict(cls, d: dict) -> SearchFilters:
         known = {k: v for k, v in d.items() if k in {
             "property_type", "operation", "city", "neighborhood", "min_price", "max_price",
             "min_area", "bedrooms", "bathrooms", "parking", "query_text",
@@ -99,10 +100,10 @@ def _num(token: str) -> int | None:
 
 
 PRICE_RE = re.compile(
-    r"(?P<prefix>(?:hasta|m[aá]ximo|max|menos de|desde|m[ií]nimo|min|de)\s+)?"
+    r"(?P<prefix>(?:hasta|m[aá]ximo|max|menos de|mas o menos|aproximadamente|alrededor de|cerca de|por|desde|m[ií]nimo|min|de)\s+)?"
     r"(?:\$|cop\s*)?"
-    r"(?P<a>\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)\s*"
-    r"(?P<mill>millones?|mill|mm)?"
+    r"(?P<a>(?:\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)|(?:un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez))\s*"
+    r"(?P<mill>millones?|millon|mill|mm)?"
 )
 PRICE_RANGE_RE = re.compile(
     r"entre\s+(?:\$|cop\s*)?(?P<a>\d[\d.,]*)(?:\s*millones?)?\s*y\s+(?:\$|cop\s*)?(?P<b>\d[\d.,]*)(?:\s*millones?)?"
@@ -118,7 +119,7 @@ PARK_N_RE = re.compile(
     r"(?P<n>\d+|un|una|dos|tres)\s*(?:garajes|parqueaderos|parqueos|parkings)"
 )
 PARK_ANY_RE = re.compile(r"\b(?:garaje|garaje|parqueadero|parqueaderos|parqueo|parqueos|parking)\b")
-OPERATION_RENT_RE = re.compile(r"\b(?:arriendo|arrendar|alquiler|alquilar|rentar|alquilada)\b")
+OPERATION_RENT_RE = re.compile(r"\b(?:arriendo|arrendar|arrendad[oa]s?|alquiler|alquilar|alquilad[oa]s?|rentar|rentad[oa]s?|renta|en renta)\b")
 OPERATION_SALE_RE = re.compile(r"\b(?:venta|vender|comprar|compra|adquirir|en venta)\b")
 TYPE_RE = re.compile(
     r"\b(casas?|apartamentos?|aptos?|lotes?|terrenos?|locales?|oficinas?|fincas?|proyectos?)\b"
@@ -168,15 +169,24 @@ def extract_filters(message: str) -> tuple[SearchFilters, str]:
             value = parse_price_token(m.group("a"), m.group("mill"))
             if value is None:
                 continue
+            # Skip if the number is IMMEDIATELY followed by room/bathroom/parking words
+            # (e.g., "por lo mínimo 2 habitaciones" -> "2" is rooms, not price)
+            # Check only the immediate next words (up to ~15 chars), not the whole sentence
+            after = low[m.end(): m.end() + 15].strip()
+            if any(after.startswith(kw) for kw in ("habitacion", "habitaciones", "alcoba", "alcobas", "cuarto", "cuartos", "dormitorio", "dormitorios", "bano", "banos", "baño", "baños", "garaje", "garajes", "parqueadero", "parqueaderos", "parqueo", "parqueos")):
+                continue
             prefix = m.group("prefix") or ""
-            before = low[max(0, m.start() - 12): m.start()]
-            if any(p in prefix for p in ("hasta", "maximo", "max", "menos")):
+            before = low[max(0, m.start() - 20): m.start()]
+            # "Aproximado" ya implica un rango: se le da margen del 20% arriba
+            # para no depender de la rama de expansión y no necesitar
+            # ampliar después ("mas o menos 1 millon" -> hasta 1.2M directo).
+            if any(p in prefix for p in ("mas o menos", "aproximadamente", "alrededor", "cerca")):
+                filters.max_price = value * 1.2
+            elif any(p in prefix for p in ("hasta", "maximo", "max", "menos", "por")):
                 filters.max_price = value
             elif any(p in prefix for p in ("desde", "minimo", "min")):
                 filters.min_price = value
-            elif "hasta" in before:
-                filters.max_price = value
-            elif "entre" in before or "de" in before:
+            elif "hasta" in before or "entre" in before or "de" in before:
                 filters.max_price = value
             else:
                 filters.max_price = value if value >= 10_000_000 else filters.max_price
@@ -218,9 +228,13 @@ def extract_filters(message: str) -> tuple[SearchFilters, str]:
             consume(m)
 
     # --- property type
-    m = TYPE_RE.search(low)
-    if m:
-        filters.property_type = TYPE_WORDS[m.group(0)]
+    # Tomar TODAS las menciones, no solo la primera. Si el usuario nombra
+    # más de un tipo distinto ("casa o apartamento"), no fijar filtro de tipo.
+    type_matches = list(TYPE_RE.finditer(low))
+    distinct_types = {TYPE_WORDS[m.group(0)] for m in type_matches}
+    if len(distinct_types) == 1:
+        filters.property_type = next(iter(distinct_types))
+    for m in type_matches:
         consume(m)
 
     # --- area
@@ -254,9 +268,7 @@ def extract_filters(message: str) -> tuple[SearchFilters, str]:
     filters.query_text = semantic or low.strip()
 
     # domain rule: a multi-million budget with no explicit operation means a purchase
-    if filters.operation is None and filters.max_price and filters.max_price >= 10_000_000:
-        filters.operation = "SALE"
-    elif filters.operation is None and filters.min_price and filters.min_price >= 10_000_000:
+    if filters.operation is None and filters.max_price and filters.max_price >= 10_000_000 or filters.operation is None and filters.min_price and filters.min_price >= 10_000_000:
         filters.operation = "SALE"
     return filters, semantic
 
@@ -390,6 +402,47 @@ async def search_properties(
     return hits
 
 
+async def find_closest_properties(
+    session: AsyncSession, filters: SearchFilters, limit: int = 5
+) -> list[str]:
+    """Cuando la búsqueda exacta da 0 resultados: mantiene ciudad/operación/tipo
+    como filtros DUROS (nunca ofrece otra ciudad en silencio), pero rankea el
+    inventario restante por distancia real a precio/habitaciones/baños pedidos.
+    Todo el cálculo vive aquí, en código — el LLM nunca decide ni inventa cuáles
+    son "las más parecidas"."""
+    candidate_filters = copy.copy(filters)
+    candidate_filters.max_price = None
+    candidate_filters.min_price = None
+    candidate_filters.bedrooms = None
+    candidate_filters.bathrooms = None
+    candidate_filters.min_area = None
+    params: dict = {}
+    where = _build_where(candidate_filters, params)
+    sql = text(f"""
+        SELECT p.id, p.price, p.bedrooms, p.bathrooms
+        FROM properties p
+        WHERE {where}
+    """)
+    rows = (await session.execute(sql, params)).mappings().all()
+    if not rows:
+        return []
+
+    target_price = filters.max_price or filters.min_price
+
+    def distance(row) -> float:
+        d = 0.0
+        if target_price and row["price"]:
+            d += abs(float(row["price"]) - float(target_price)) / float(target_price)
+        if filters.bedrooms is not None and row["bedrooms"] is not None:
+            d += 0.3 * abs(row["bedrooms"] - filters.bedrooms)
+        if filters.bathrooms is not None and row["bathrooms"] is not None:
+            d += 0.3 * abs(row["bathrooms"] - filters.bathrooms)
+        return d
+
+    ranked = sorted(rows, key=distance)
+    return [str(r["id"]) for r in ranked[:limit]]
+
+
 async def match_saved_search(
     session: AsyncSession, filters_dict: dict, limit: int = 3
 ) -> list[PropertyHit]:
@@ -430,7 +483,18 @@ async def similar_properties(
 
 
 def parse_price_token(raw: str, mill: str | None) -> float | None:
-    raw = raw.strip()
+    raw = raw.strip().lower()
+    # Handle word numbers
+    word_to_num = {
+        "un": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+        "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10,
+    }
+    if raw in word_to_num:
+        value = float(word_to_num[raw])
+        if mill and mill.strip():
+            return value * 1_000_000
+        return value * 1_000_000  # word numbers with "millones" are millions
+    
     # COP convention: "." separates thousands ("285.000.000"). But a single
     # separator with 1-2 trailing digits is a decimal ("1.5 millones").
     if re.fullmatch(r"\d{1,3}[.,]\d{1,2}", raw):

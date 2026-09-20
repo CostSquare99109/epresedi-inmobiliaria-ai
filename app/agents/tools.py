@@ -245,28 +245,25 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
             filters.query_text = semantic
         hits = await search_properties(session, filters, semantic)
 
-        # Fallback automático de precio: si no hay resultados exactos y el usuario
-        # dio un presupuesto máximo, el CÓDIGO (nunca el LLM) intenta una segunda
-        # búsqueda real ampliando el precio. Así "1,2 millones" siempre sale de una
-        # búsqueda real en el inventario, nunca inventado por el modelo.
-        effective_filters = filters
-        fallback_used = False
-        if not hits and filters.max_price:
-            import copy as _copy
-            fallback_filters = _copy.copy(filters)
-            fallback_filters.max_price = filters.max_price * 1.3
-            fallback_hits = await search_properties(session, fallback_filters, semantic)
-            if fallback_hits:
-                hits = fallback_hits
-                effective_filters = fallback_filters
-                fallback_used = True
-
         props = await prop_repo.get_properties(session, [h.property_id for h in hits], limit=max(len(hits), 1))
         ordered = {str(p.id): p.to_dict() for p in props}
         items = [ordered[h.property_id] for h in hits if h.property_id in ordered]
         ctx.state["last_results"] = items
-        ctx.state["last_filters"] = effective_filters.to_dict()
-        # Signal if search returned no results so LLM knows to ask about expanding
+        ctx.state["last_filters"] = filters.to_dict()
+
+        closest_items: list[dict] = []
+        if not items and (filters.max_price or filters.min_price or filters.bedrooms or filters.bathrooms):
+            # Sin resultados exactos: el CÓDIGO (nunca el LLM) busca reales las
+            # 5 propiedades más cercanas por precio/habitaciones/baños, manteniendo
+            # ciudad/operación/tipo como filtros duros. Se devuelven AMBOS resultados:
+            # el exacto (vacío) y las alternativas reales más parecidas.
+            from app.properties.search import find_closest_properties
+            closest_ids = await find_closest_properties(session, filters, limit=5)
+            if closest_ids:
+                closest_props = await prop_repo.get_properties(session, closest_ids, limit=len(closest_ids))
+                closest_by_id = {str(p.id): p.to_dict() for p in closest_props}
+                closest_items = [closest_by_id[cid] for cid in closest_ids if cid in closest_by_id]
+
         if not items:
             ctx.state["awaiting_search_refinement"] = True
             ctx.state["last_search_had_results"] = False
@@ -276,17 +273,21 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
         ctx.retrieved_property_ids.extend(str(p["id"]) for p in items)
         result["count"] = len(items)
         result["properties"] = items
-        if fallback_used:
-            result["fallback_used"] = True
-            result["fallback_requested_max_price"] = filters.max_price
-            result["fallback_applied_max_price"] = effective_filters.max_price
-            result["fallback_note"] = (
-                f"No hubo resultados hasta ${filters.max_price:,.0f} (lo pedido). Se amplió la búsqueda "
-                f"REAL hasta ${effective_filters.max_price:,.0f} y sí hay resultados (son estos). "
-                "Informa al usuario CLARAMENTE que estos NO cumplen el presupuesto exacto que pidió, "
-                "que son la alternativa más cercana disponible, y pregúntale si le interesan antes de "
-                "continuar. Nunca presentes estos resultados como si cumplieran el presupuesto original."
+        if closest_items:
+            ctx.retrieved_property_ids.extend(str(p["id"]) for p in closest_items)
+            result["exact_match"] = False
+            result["closest_properties"] = closest_items
+            result["closest_note"] = (
+                "No hay resultados EXACTOS para lo que pidió el usuario (ver filtros aplicados). "
+                "`closest_properties` son propiedades REALES del inventario, las más parecidas por "
+                "precio/habitaciones/baños, en la misma ciudad/tipo/operación pedidos. Preséntaselas "
+                "como alternativas cercanas dejando CLARO que no cumplen exactamente lo solicitado — "
+                "nunca las presentes como si fueran un match exacto. Menciona en qué se diferencian "
+                "(precio más alto, menos habitaciones, etc.) usando los datos reales de cada una."
             )
+        elif not items:
+            result["exact_match"] = False
+            result["closest_properties"] = []
         # NOTA: ya no se persisten preferencias automáticamente en cada búsqueda.
         # Los filtros de una búsqueda pueden ser exploratorios o (antes del fix de
         # alucinaciones) inventados por el LLM; guardarlos ciegamente como "preferencia
