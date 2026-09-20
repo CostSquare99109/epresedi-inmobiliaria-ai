@@ -279,10 +279,6 @@ class PureLLMOrchestrator:
             # ("la segunda", "esa", tono) — NUNCA como fuente de datos de propiedades:
             # esa regla vive en el system prompt (ver prompts_v2.py). Los datos
             # confirmados viajan estructurados en state_context (last_results/last_filters).
-            # El historial crudo sirve solo para resolver referencias conversacionales
-            # ("la segunda", "esa", tono) — NUNCA como fuente de datos de propiedades:
-            # esa regla vive en el system prompt (ver prompts_v2.py). Los datos
-            # confirmados viajan estructurados en state_context (last_results/last_filters).
             recent = await memory_service.recent_messages(
                 ctx.session, ctx.conversation_id, limit=max(2, s.LLM_HISTORY_TURNS)
             )
