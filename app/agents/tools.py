@@ -244,11 +244,28 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
         if semantic and not filters.query_text:
             filters.query_text = semantic
         hits = await search_properties(session, filters, semantic)
+
+        # Fallback automático de precio: si no hay resultados exactos y el usuario
+        # dio un presupuesto máximo, el CÓDIGO (nunca el LLM) intenta una segunda
+        # búsqueda real ampliando el precio. Así "1,2 millones" siempre sale de una
+        # búsqueda real en el inventario, nunca inventado por el modelo.
+        effective_filters = filters
+        fallback_used = False
+        if not hits and filters.max_price:
+            import copy as _copy
+            fallback_filters = _copy.copy(filters)
+            fallback_filters.max_price = filters.max_price * 1.3
+            fallback_hits = await search_properties(session, fallback_filters, semantic)
+            if fallback_hits:
+                hits = fallback_hits
+                effective_filters = fallback_filters
+                fallback_used = True
+
         props = await prop_repo.get_properties(session, [h.property_id for h in hits], limit=max(len(hits), 1))
         ordered = {str(p.id): p.to_dict() for p in props}
         items = [ordered[h.property_id] for h in hits if h.property_id in ordered]
         ctx.state["last_results"] = items
-        ctx.state["last_filters"] = filters.to_dict()
+        ctx.state["last_filters"] = effective_filters.to_dict()
         # Signal if search returned no results so LLM knows to ask about expanding
         if not items:
             ctx.state["awaiting_search_refinement"] = True
@@ -259,6 +276,17 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
         ctx.retrieved_property_ids.extend(str(p["id"]) for p in items)
         result["count"] = len(items)
         result["properties"] = items
+        if fallback_used:
+            result["fallback_used"] = True
+            result["fallback_requested_max_price"] = filters.max_price
+            result["fallback_applied_max_price"] = effective_filters.max_price
+            result["fallback_note"] = (
+                f"No hubo resultados hasta ${filters.max_price:,.0f} (lo pedido). Se amplió la búsqueda "
+                f"REAL hasta ${effective_filters.max_price:,.0f} y sí hay resultados (son estos). "
+                "Informa al usuario CLARAMENTE que estos NO cumplen el presupuesto exacto que pidió, "
+                "que son la alternativa más cercana disponible, y pregúntale si le interesan antes de "
+                "continuar. Nunca presentes estos resultados como si cumplieran el presupuesto original."
+            )
         # NOTA: ya no se persisten preferencias automáticamente en cada búsqueda.
         # Los filtros de una búsqueda pueden ser exploratorios o (antes del fix de
         # alucinaciones) inventados por el LLM; guardarlos ciegamente como "preferencia
