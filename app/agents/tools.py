@@ -551,6 +551,121 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
         sses = await crm_service.list_saved_searches(session, ctx.user_id)
         result["saved_searches"] = [{"id": str(s.id), "name": s.name, "filters": s.filters} for s in sses]
 
+    elif name == "create_alert":
+        # Create a new property alert with full Telegram context
+        telegram_user_id = ctx.state.get("telegram_user_id", ctx.user_id)
+        telegram_chat_id = ctx.state.get("telegram_chat_id", ctx.user_id)
+        user_name = ctx.state.get("user_name", "Usuario")
+
+        name = args.get("name") or "Alerta de propiedades"
+        filters = dict(args.get("filters") or ctx.state.get("last_filters") or {})
+        frequency_hours = max(1, min(168, int(args.get("frequency_hours") or 1)))
+
+        alert = await crm_service.create_alert(
+            session,
+            ctx.user_id,
+            telegram_user_id,
+            telegram_chat_id,
+            user_name,
+            name,
+            filters,
+            frequency_hours,
+        )
+        result["alert"] = {
+            "id": str(alert.id),
+            "name": alert.name,
+            "filters": alert.filters,
+            "status": alert.status.value,
+            "frequency_hours": alert.frequency_hours,
+        }
+
+    elif name == "list_alerts":
+        status = args.get("status")
+        alerts = await crm_service.list_alerts(session, ctx.user_id, status)
+        result["alerts"] = [
+            {
+                "id": str(a.id),
+                "name": a.name,
+                "filters": a.filters,
+                "status": a.status.value,
+                "frequency_hours": a.frequency_hours,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+                "last_checked_at": a.last_checked_at.isoformat() if a.last_checked_at else None,
+            }
+            for a in alerts
+        ]
+
+    elif name == "get_alert":
+        alert_id = uuid_mod.UUID(str(args.get("alert_id")))
+        alert = await crm_service.get_alert(session, ctx.user_id, alert_id)
+        if alert is None:
+            result = {"ok": False, "error": "Alerta no encontrada."}
+        else:
+            result["alert"] = {
+                "id": str(alert.id),
+                "name": alert.name,
+                "filters": alert.filters,
+                "status": alert.status.value,
+                "frequency_hours": alert.frequency_hours,
+                "created_at": alert.created_at.isoformat() if alert.created_at else None,
+                "last_checked_at": alert.last_checked_at.isoformat() if alert.last_checked_at else None,
+            }
+
+    elif name == "update_alert":
+        alert_id = uuid_mod.UUID(str(args.get("alert_id")))
+        data = {k: v for k, v in args.items() if k != "alert_id"}
+        alert = await crm_service.update_alert(session, ctx.user_id, alert_id, data)
+        if alert is None:
+            result = {"ok": False, "error": "Alerta no encontrada."}
+        else:
+            result["alert"] = {
+                "id": str(alert.id),
+                "name": alert.name,
+                "filters": alert.filters,
+                "status": alert.status.value,
+                "frequency_hours": alert.frequency_hours,
+            }
+
+    elif name == "pause_alert":
+        alert_id = uuid_mod.UUID(str(args.get("alert_id")))
+        ok = await crm_service.pause_alert(session, ctx.user_id, alert_id)
+        result["paused"] = ok
+        if not ok:
+            result["error"] = "Alerta no encontrada."
+
+    elif name == "resume_alert":
+        alert_id = uuid_mod.UUID(str(args.get("alert_id")))
+        ok = await crm_service.resume_alert(session, ctx.user_id, alert_id)
+        result["resumed"] = ok
+        if not ok:
+            result["error"] = "Alerta no encontrada."
+
+    elif name == "delete_alert":
+        alert_id = uuid_mod.UUID(str(args.get("alert_id")))
+        ok = await crm_service.delete_alert(session, ctx.user_id, alert_id)
+        result["deleted"] = ok
+        if not ok:
+            result["error"] = "Alerta no encontrada."
+
+    elif name == "get_notification_history":
+        alert_id = None
+        if args.get("alert_id"):
+            alert_id = uuid_mod.UUID(str(args.get("alert_id")))
+        limit = int(args.get("limit") or 50)
+        history = await crm_service.get_notification_history(session, ctx.user_id, alert_id, limit)
+        result["notifications"] = [
+            {
+                "id": str(h.id),
+                "alert_id": str(h.saved_search_id),
+                "property_id": str(h.property_id),
+                "channel": h.channel,
+                "status": h.status,
+                "sent_at": h.sent_at.isoformat() if h.sent_at else None,
+                "created_at": h.created_at.isoformat() if h.created_at else None,
+            }
+            for h in history
+        ]
+
     elif name == "create_lead":
         lead = await crm_service.get_or_create_lead(session, ctx.user_id)
         data = {k: v for k, v in args.items() if k in ("name", "phone", "email", "budget", "status", "notes")}

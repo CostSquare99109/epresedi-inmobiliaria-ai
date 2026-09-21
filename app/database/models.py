@@ -102,6 +102,12 @@ class LeadStatus(StrEnum):
     LOST = "LOST"
 
 
+class AlertStatus(StrEnum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
+
+
 class AppointmentStatus(StrEnum):
     REQUESTED = "REQUESTED"
     CONFIRMED = "CONFIRMED"
@@ -527,9 +533,50 @@ class SavedSearch(Base):
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    user_name: Mapped[str] = mapped_column(String(160), default="")
     name: Mapped[str] = mapped_column(String(160), default="")
     filters: Mapped[dict] = mapped_column(JSONB, default=dict)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[AlertStatus] = mapped_column(sa_enum(AlertStatus), default=AlertStatus.ACTIVE, index=True)
+    frequency_hours: Mapped[int] = mapped_column(Integer, default=1)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=utcnow
+    )
+
+    @property
+    def active(self) -> bool:
+        """Backward compatibility: True if status is ACTIVE."""
+        return self.status == AlertStatus.ACTIVE
+
+    @active.setter
+    def active(self, value: bool) -> None:
+        """Backward compatibility: set status based on active flag."""
+        self.status = AlertStatus.ACTIVE if value else AlertStatus.CANCELLED
+
+
+class NotificationHistory(Base):
+    __tablename__ = "notification_history"
+    __table_args__ = (
+        UniqueConstraint("saved_search_id", "property_id", name="uq_alert_property"),
+        Index("ix_notification_history_search", "saved_search_id"),
+        Index("ix_notification_history_property", "property_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    saved_search_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("saved_searches.id", ondelete="CASCADE"), index=True
+    )
+    property_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), index=True
+    )
+    channel: Mapped[str] = mapped_column(String(20), default="telegram")
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

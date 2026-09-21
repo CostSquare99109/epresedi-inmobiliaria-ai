@@ -173,6 +173,63 @@ TOOL_SPECS: list[dict] = [
         "name": "list_saved_searches", "description": "Lista búsquedas guardadas.", "parameters": {"type": "object", "properties": {}},
     }},
     {"type": "function", "function": {
+        "name": "create_alert", "description": (
+            "CREA una alerta persistente de propiedades. Úsala SOLO cuando el usuario haya confirmado "
+            "explícitamente los criterios y quiera ser notificado en el futuro. Requiere: name (nombre "
+            "descriptivo), filters (criterios estructurados: operation, property_type, city, "
+            "min_price, max_price, bedrooms, bathrooms, parking, min_area), frequency_hours (opcional, "
+            "default 1, rango 1-168). El sistema valida y persiste la alerta; luego el scheduler la "
+            "evalúa automáticamente y notifica por Telegram cuando aparecen propiedades nuevas que coinciden. "
+            "NO la uses para búsquedas puntuales (usa search_properties)."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "Nombre descriptivo de la alerta (ej: 'Casas Carepa arriendo < 1.5M')"},
+            "filters": {"type": "object", "description": "Criterios estructurados", "properties": {
+                "property_type": {"type": "string", "enum": ["casa", "apartamento", "lote", "local", "oficina", "finca", "proyecto"]},
+                "operation": {"type": "string", "enum": ["SALE", "RENT"]},
+                "city": {"type": "string"},
+                "min_price": {"type": "number"}, "max_price": {"type": "number"},
+                "bedrooms": {"type": "integer"}, "bathrooms": {"type": "integer"},
+                "parking": {"type": "integer"}, "min_area": {"type": "number"},
+            }},
+            "frequency_hours": {"type": "integer", "description": "Frecuencia de evaluación en horas (1-168, default 1)"},
+        }, "required": ["name", "filters"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_alerts", "description": "Lista alertas del usuario. Opcional: filtrar por status (active, paused, cancelled).",
+        "parameters": {"type": "object", "properties": {"status": {"type": "string", "enum": ["active", "paused", "cancelled"]}}},
+    }},
+    {"type": "function", "function": {
+        "name": "get_alert", "description": "Obtiene detalles de una alerta específica por su ID.",
+        "parameters": {"type": "object", "properties": {"alert_id": {"type": "string"}}, "required": ["alert_id"]},
+    }},
+    {"type": "function", "function": {
+        "name": "update_alert", "description": "Actualiza una alerta existente: name, filters, frequency_hours, status.",
+        "parameters": {"type": "object", "properties": {
+            "alert_id": {"type": "string"},
+            "name": {"type": "string"},
+            "filters": {"type": "object"},
+            "frequency_hours": {"type": "integer"},
+            "status": {"type": "string", "enum": ["active", "paused", "cancelled"]},
+        }, "required": ["alert_id"]},
+    }},
+    {"type": "function", "function": {
+        "name": "pause_alert", "description": "Pausa una alerta (deja de generar notificaciones).",
+        "parameters": {"type": "object", "properties": {"alert_id": {"type": "string"}}, "required": ["alert_id"]},
+    }},
+    {"type": "function", "function": {
+        "name": "resume_alert", "description": "Reactiva una alerta pausada.",
+        "parameters": {"type": "object", "properties": {"alert_id": {"type": "string"}}, "required": ["alert_id"]},
+    }},
+    {"type": "function", "function": {
+        "name": "delete_alert", "description": "Cancela (elimina) una alerta permanentemente.",
+        "parameters": {"type": "object", "properties": {"alert_id": {"type": "string"}}, "required": ["alert_id"]},
+    }},
+    {"type": "function", "function": {
+        "name": "get_notification_history", "description": "Historial de notificaciones enviadas por alerta.",
+        "parameters": {"type": "object", "properties": {"alert_id": {"type": "string"}, "limit": {"type": "integer", "description": "Máximo resultados (default 50)"}}},
+    }},
+    {"type": "function", "function": {
         "name": "create_lead", "description": "Crea/actualiza el lead del usuario con datos observables.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "phone": {"type": "string"}, "budget": {"type": "number"}, "status": {"type": "string"}, "notes": {"type": "string"}}},
     }},

@@ -34,6 +34,12 @@ ACTION_LABELS = {
     "confirm_booking": "✅ Sí, confirmar",
     "cancel_booking": "❌ No, cancelar",
     "list_saved": "🔔 Mis alertas",
+    "create_alert": "✅ Crear alerta",
+    "list_alerts": "📋 Mis alertas",
+    "pause_alert": "⏸️ Pausar",
+    "resume_alert": "▶️ Reactivar",
+    "delete_alert": "🗑️ Cancelar",
+    "notification_history": "📜 Historial",
 }
 
 

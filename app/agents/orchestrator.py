@@ -125,6 +125,12 @@ class Orchestrator:
             "save_search": "Guárdame esta búsqueda como alerta",
             "list_saved": "Muéstrame mis búsquedas guardadas",
             "cancel_appt": "Cancela mi cita {ref}",
+            "create_alert": "Crea una alerta con estos criterios",
+            "list_alerts": "Muéstrame mis alertas",
+            "pause_alert": "Pausa mi alerta {ref}",
+            "resume_alert": "Reactiva mi alerta {ref}",
+            "delete_alert": "Cancela mi alerta {ref}",
+            "notification_history": "Muéstrame el historial de notificaciones de mi alerta {ref}",
         }
         template = action_map.get(action, "Acción: {action} {ref}")
         text = template.format(action=action, **{"ref": "", **p})

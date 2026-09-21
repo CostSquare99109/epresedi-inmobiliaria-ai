@@ -18,6 +18,12 @@ class Intent(str, Enum):
     REMOVE_PROPERTY = "REMOVE_PROPERTY"
     SAVE_SEARCH = "SAVE_SEARCH"
     LIST_SAVED_SEARCHES = "LIST_SAVED_SEARCHES"
+    CREATE_ALERT = "CREATE_ALERT"
+    LIST_ALERTS = "LIST_ALERTS"
+    UPDATE_ALERT = "UPDATE_ALERT"
+    PAUSE_ALERT = "PAUSE_ALERT"
+    RESUME_ALERT = "RESUME_ALERT"
+    DELETE_ALERT = "DELETE_ALERT"
     SCHEDULE_VISIT = "SCHEDULE_VISIT"
     CANCEL_APPOINTMENT = "CANCEL_APPOINTMENT"
     CONTACT_AGENT = "CONTACT_AGENT"
@@ -53,6 +59,12 @@ _COVER_REQUEST = r"\b(?:portada|cover)\b"
 _ORDINAL_IMAGE_REQUEST = r"\b(?:la|el)\s+(?:primera|segunda|tercera|cuarta|quinta|\d+)\s+(?:imagen|foto|fotografia)\b"
 _LIST_SAVED = r"\b(?:mis b[u\u00fa]squedas?|b[u\u00fa]squedas guardadas|mis alertas|ver (?:mis )?alertas|listar alertas)\b"
 _SAVE_SEARCH = r"\b(?:av[\u00ed]same|avisame|notif[i\u00ed]came|gu[a\u00e1]rdame (?:esta |la )?b[u\u00fa]squeda|guardar b[u\u00fa]squeda|crear alerta|alerta)\b"
+_CREATE_ALERT = r"\b(?:crear alerta|nueva alerta|quiero alerta|pon(?:er|me) (?:en )?alerta)\b"
+_LIST_ALERTS = r"\b(?:mis alertas|ver alertas|listar alertas|qu[eé] alertas tengo)\b"
+_UPDATE_ALERT = r"\b(?:cambiar alerta|modificar alerta|actualizar alerta|editar alerta)\b"
+_PAUSE_ALERT = r"\b(?:pausar alerta|detener alerta|suspender alerta|parar alerta)\b"
+_RESUME_ALERT = r"\b(?:reactivar alerta|reanudar alerta|continuar alerta|activar alerta)\b"
+_DELETE_ALERT = r"\b(?:cancelar alerta|eliminar alerta|borrar alerta|quitar alerta)\b"
 _CANCEL = r"\b(?:cancel(?:ar|a|ame) (?:la|mi)? ?(?:cita|visita|reserva))"
 _CONTACT = r"\b(?:hablar con (?:un )?asesor|contactar asesor|asesor humano|llamar a un asesor|agente humano)"
 _SLOTS = r"\b(?:horarios?|horas disponibles|qu[eé] horarios)"
@@ -161,6 +173,19 @@ def detect_intent(message: str) -> Intent:
         return Intent.SAVE_SEARCH
     if re.search(_LIST_SAVED, low):
         return Intent.LIST_SAVED_SEARCHES
+    # Alert management intents
+    if re.search(_CREATE_ALERT, low):
+        return Intent.CREATE_ALERT
+    if re.search(_LIST_ALERTS, low):
+        return Intent.LIST_ALERTS
+    if re.search(_UPDATE_ALERT, low):
+        return Intent.UPDATE_ALERT
+    if re.search(_PAUSE_ALERT, low):
+        return Intent.PAUSE_ALERT
+    if re.search(_RESUME_ALERT, low):
+        return Intent.RESUME_ALERT
+    if re.search(_DELETE_ALERT, low):
+        return Intent.DELETE_ALERT
     if re.search(_UNFAV, low):
         return Intent.REMOVE_PROPERTY
     if re.search(_FAV, low):
