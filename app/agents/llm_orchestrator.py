@@ -13,7 +13,7 @@ División de responsabilidades (OBLIGATORIA, ver AGENTS.md):
 """
 from __future__ import annotations
 
-import json
+import datetime as dt
 import time
 import uuid as uuid_mod
 
@@ -23,10 +23,11 @@ from app.agents.intents import Intent
 from app.agents.metrics import METRICS
 from app.agents.prompts_v2 import PROMPT_VERSION, build_system_prompt
 from app.agents.reply import AgentReply
-from app.agents.runtime import AgentRuntime, TurnOutcome
+from app.agents.runtime import AgentRuntime, ProgressCallback, TurnOutcome
 from app.agents.state import describe_state
 from app.agents.tools import ToolContext
 from app.ai.llm import LLMProvider
+from app.core.bizconfig import get_business_timezone
 from app.core.logging import get_logger
 from app.core.settings import get_settings
 from app.database.models import AiEvent, Role
@@ -116,9 +117,10 @@ def build_degraded_reply(evidence: list[dict], outcome: TurnOutcome) -> str:
 class PureLLMOrchestrator:
     """Turno completo: bootstrap → runtime (loop agentic) → persistencia/auditoría."""
 
-    def __init__(self, provider: LLMProvider):
+    def __init__(self, provider: LLMProvider, on_progress: ProgressCallback | None = None):
         self.provider = provider
         self.settings = get_settings()
+        self._on_progress = on_progress
         self.runtime = AgentRuntime(provider)
 
     # ------------------------------------------------------------------ turno
@@ -129,6 +131,7 @@ class PureLLMOrchestrator:
         text: str,
         username: str = "",
         first_name: str = "",
+        on_progress: ProgressCallback | None = None,
     ) -> AgentReply:
         started = time.monotonic()
         run_id = _new_request_id()
@@ -156,7 +159,7 @@ class PureLLMOrchestrator:
                 request_id=run_id,
             )
             messages = await self._build_messages(ctx, text)
-            outcome = await self.runtime.run_turn(ctx, text, messages)
+            outcome = await self.runtime.run_turn(ctx, text, messages, on_progress=on_progress)
             intent = outcome.intent
 
             if outcome.reply_text.strip():
@@ -265,7 +268,7 @@ class PureLLMOrchestrator:
                 status=status[:64],
             ))
             await session.commit()
-        except Exception:
+        except Exception:  # noqa: BLE001 - audit write must never break the main flow
             await session.rollback()
             log.warning("audit_write_failed run_id=%s", run_id)
 
@@ -301,10 +304,33 @@ class PureLLMOrchestrator:
                 f"tipo={prefs.property_type or 's/d'}, operación={prefs.operation or 's/d'}, "
                 f"presupuesto máx={prefs.max_budget or 's/d'}."
             )
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+        from app.core.bizconfig import get_business_timezone
+        # Obtener la zona horaria del negocio y la hora actual en esa zona
+        business_tz_name = await get_business_timezone()
+        try:
+            business_tz = ZoneInfo(business_tz_name)
+        except Exception:
+            business_tz = ZoneInfo("America/Bogota")
+        now_utc = dt.datetime.now(dt.UTC)
+        now_business = now_utc.astimezone(business_tz)
+        current_dt_business = now_business.isoformat()
+        current_date_business = now_business.date().isoformat()
+        current_day_business = now_business.strftime("%A")
+        # Mapear día de la semana al español
+        day_names_es = {
+            "Monday": "lunes", "Tuesday": "martes", "Wednesday": "miércoles",
+            "Thursday": "jueves", "Friday": "viernes", "Saturday": "sábado", "Sunday": "domingo"
+        }
+        current_day_es = day_names_es.get(current_day_business, current_day_business.lower())
         state_context = describe_state(ctx.state)
         turn_context = (
             f"Conversación nueva: {'sí' if not history else 'no'}\n"
-            f"Agente ya presentado: {'sí' if ctx.state.get('agent_introduced') is True else 'no'}"
+            f"Agente ya presentado: {'sí' if ctx.state.get('agent_introduced') is True else 'no'}\n"
+            f"Fecha/hora actual del sistema (zona horaria del negocio: {business_tz_name}): {current_dt_business}\n"
+            f"Fecha actual (zona horaria del negocio): {current_date_business}\n"
+            f"Día de la semana actual (zona horaria del negocio): {current_day_es}"
         )
         messages: list[dict] = [{
             "role": "system",
@@ -323,7 +349,7 @@ class PureLLMOrchestrator:
 # Fábrica (compatibilidad con main.py / app/agents/orchestrator.py)
 # ──────────────────────────────────────────────────────────────────────────
 
-async def create_orchestrator(llm: LLMProvider | None = None):
+async def create_orchestrator(llm: LLMProvider | None = None, on_progress: ProgressCallback | None = None):
     """Crea el orquestador agent-loop. Sin proveedor: error claro y honesto."""
     if llm is None:
         s = get_settings()
@@ -331,4 +357,4 @@ async def create_orchestrator(llm: LLMProvider | None = None):
             f"LLM_MODE={s.LLM_MODE} pero no hay proveedor configurado. "
             "El agent-loop requiere NVIDIA_API_KEY + NVIDIA_MODEL en .env."
         )
-    return PureLLMOrchestrator(llm)
+    return PureLLMOrchestrator(llm, on_progress=on_progress)

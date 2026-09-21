@@ -282,11 +282,11 @@ export default function Documentos() {
                   <thead>
                     <tr>
                       <th>Documento</th>
-                      <th>Tipo</th>
+                      <th className="table-responsive-hide-xs">Tipo</th>
                       <th>Estado</th>
-                      <th className="num">Fragmentos</th>
-                      <th className="num">Versión</th>
-                      <th>Procesado</th>
+                      <th className="num table-responsive-hide-xs">Fragmentos</th>
+                      <th className="num table-responsive-hide-sm">Versión</th>
+                      <th className="table-responsive-hide-sm">Procesado</th>
                       <th>Acciones</th>
                     </tr>
                   </thead>
@@ -297,13 +297,13 @@ export default function Documentos() {
                           <div className="cell-main">{d.title}</div>
                           <div className="cell-sub">{d.filename}</div>
                         </td>
-                        <td>{d.document_type}</td>
+                        <td className="table-responsive-hide-xs">{d.document_type}</td>
                         <td>
                           <StatusBadge status={d.status} />
                         </td>
-                        <td className="num">{d.chunk_count}</td>
-                        <td className="num">v{d.version}</td>
-                        <td>
+                        <td className="num table-responsive-hide-xs">{d.chunk_count}</td>
+                        <td className="num table-responsive-hide-sm">v{d.version}</td>
+                        <td className="table-responsive-hide-sm">
                           {d.processed_at ? formatDateTime(d.processed_at) : "—"}
                           {d.error && (
                             <div className="cell-sub">{d.error.slice(0, 60)}</div>

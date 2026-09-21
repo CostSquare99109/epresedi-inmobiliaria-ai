@@ -131,12 +131,12 @@ export default async function Auditoria({ searchParams }: PageProps) {
                 <thead>
                   <tr>
                     <th>Acción</th>
-                    <th>Entidad</th>
-                    <th>ID entidad</th>
-                    <th>Actor</th>
+                    <th className="table-responsive-hide-xs">Entidad</th>
+                    <th className="table-responsive-hide-sm">ID entidad</th>
+                    <th className="table-responsive-hide-xs">Actor</th>
                     <th>Resultado</th>
                     <th>Fecha</th>
-                    <th>Detalles</th>
+                    <th className="table-responsive-hide-md">Detalles</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -145,13 +145,13 @@ export default async function Auditoria({ searchParams }: PageProps) {
                       <td>
                         <div className="cell-main">{e.action}</div>
                       </td>
-                      <td>{e.entity}</td>
-                      <td>
+                      <td className="table-responsive-hide-xs">{e.entity}</td>
+                      <td className="table-responsive-hide-sm">
                         <div className="cell-main" style={{ fontFamily: "monospace", fontSize: "12px" }}>
                           {e.entity_id || "—"}
                         </div>
                       </td>
-                      <td>
+                      <td className="table-responsive-hide-xs">
                         <div className="cell-main">{e.actor_name || e.actor_email || "sistema"}</div>
                         <div className="cell-sub">{e.actor_email}</div>
                       </td>
@@ -164,7 +164,7 @@ export default async function Auditoria({ searchParams }: PageProps) {
                         <div className="cell-main">{formatDateTime(e.created_at)}</div>
                         <div className="cell-sub">{timeAgo(e.created_at)}</div>
                       </td>
-                      <td>
+                      <td className="table-responsive-hide-md">
                         <details>
                           <summary className="cell-sub" style={{ cursor: "pointer" }}>Ver metadatos</summary>
                           <pre style={{ marginTop: "var(--sp-2)", fontSize: "11px", maxHeight: "150px", overflow: "auto" }}>

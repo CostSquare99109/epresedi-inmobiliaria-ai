@@ -101,10 +101,10 @@ export default async function Leads({ searchParams }: PageProps) {
                 <thead>
                   <tr>
                     <th>Contacto</th>
-                    <th>Teléfono</th>
+                    <th className="table-responsive-hide-xs">Teléfono</th>
                     <th>Estado</th>
-                    <th className="num">Presupuesto</th>
-                    <th>Registrado</th>
+                    <th className="num table-responsive-hide-sm">Presupuesto</th>
+                    <th className="table-responsive-hide-xs">Registrado</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -114,7 +114,7 @@ export default async function Leads({ searchParams }: PageProps) {
                         <div className="cell-main">{l.name || "Sin nombre"}</div>
                         <div className="cell-sub">Usuario #{l.user_id}</div>
                       </td>
-                      <td>
+                      <td className="table-responsive-hide-xs">
                         {l.phone ? (
                           <a
                             className="call-link"
@@ -131,10 +131,10 @@ export default async function Leads({ searchParams }: PageProps) {
                       <td>
                         <StatusBadge status={l.status} />
                       </td>
-                      <td className="num">
+                      <td className="num table-responsive-hide-sm">
                         {l.budget ? formatMoney(l.budget, "COP") : "—"}
                       </td>
-                      <td>
+                      <td className="table-responsive-hide-xs">
                         {formatDateTime(l.created_at)}
                         <div className="cell-sub">{timeAgo(l.created_at)}</div>
                       </td>

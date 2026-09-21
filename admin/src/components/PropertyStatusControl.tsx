@@ -5,6 +5,7 @@ import { statusMeta } from "@/lib/status";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ActionToast, type Feedback } from "./ActionToast";
 import { updatePropertyStatus } from "@/app/propiedades/actions";
+import { Icon } from "./icons";
 
 const STATUSES = ["AVAILABLE", "RESERVED", "SOLD", "INACTIVE"];
 
@@ -54,19 +55,27 @@ export function PropertyStatusControl({
 
   return (
     <>
-      <select
-        className="select-sm"
-        value={value}
-        disabled={pending}
-        onChange={(e) => requestChange(e.target.value)}
-        aria-label={`Cambiar estado de ${code}`}
-      >
-        {STATUSES.map((s) => (
-          <option key={s} value={s}>
-            {statusMeta(s).label}
-          </option>
-        ))}
-      </select>
+      <div className="status-control" style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+        <select
+          className="select-sm"
+          value={value}
+          disabled={pending}
+          onChange={(e) => requestChange(e.target.value)}
+          aria-label={`Cambiar estado de ${code}`}
+          aria-busy={pending}
+        >
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {statusMeta(s).label}
+            </option>
+          ))}
+        </select>
+        {pending && (
+          <span className="status-spinner" aria-hidden="true" aria-label="Actualizando estado">
+            <Icon name="refresh" size={14} />
+          </span>
+        )}
+      </div>
       <ConfirmDialog
         open={confirming !== null}
         title="¿Cambiar el estado de la propiedad?"

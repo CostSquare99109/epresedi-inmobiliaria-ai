@@ -137,7 +137,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
             <Icon name="home" size={18} />
           </span>
           <span className="brand-text">
-            <span className="brand-name">EXPRESEDI</span>
+            <span className="brand-name">epresedi</span>
             <span className="brand-sub">Inmobiliaria</span>
           </span>
         </div>
@@ -224,14 +224,14 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
           >
             <Icon name={open ? "x" : "menu"} size={18} />
           </button>
-          <span className="mobilebar-brand">EXPRESEDI</span>
+          <span className="mobilebar-brand">epresedi</span>
           {crumb && <span className="mobilebar-page">{crumb.page}</span>}
         </header>
         <main className="content" id="main">
           {children}
         </main>
         <footer className="footer">
-          EXPRESEDI Inmobiliaria · Panel interno de operación
+          epresedi Inmobiliaria · Panel interno de operación
         </footer>
       </div>
     </div>

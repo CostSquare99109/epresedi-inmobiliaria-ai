@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef } from "react";
 import { Icon } from "./icons";
+import { Button } from "./ui/Button";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -18,6 +19,7 @@ interface ConfirmDialogProps {
 /**
  * Diálogo de confirmación accesible: focus inicial en la acción segura,
  * Escape para cerrar, aria-describedby y restauración del focus.
+ * Usa el componente Button para consistencia visual y spinner de carga.
  */
 export function ConfirmDialog({
   open,
@@ -97,24 +99,24 @@ export function ConfirmDialog({
           {description}
         </p>
         <div className="dialog-actions">
-          <button
-            type="button"
+          <Button
             ref={cancelRef}
-            className="btn btn-secondary"
+            type="button"
+            variant="secondary"
             onClick={onCancel}
             disabled={busy}
           >
             {cancelLabel}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
             ref={confirmRef}
-            className={`btn ${danger ? "btn-danger" : "btn-primary"}`}
+            type="button"
+            variant={danger ? "danger" : "primary"}
             onClick={onConfirm}
-            disabled={busy}
+            loading={busy}
           >
-            {busy ? "Procesando…" : confirmLabel}
-          </button>
+            {confirmLabel}
+          </Button>
         </div>
       </div>
     </div>

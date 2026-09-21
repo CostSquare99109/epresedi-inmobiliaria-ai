@@ -12,7 +12,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid as uuid_mod
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -46,10 +46,8 @@ from app.database.models import (
     AppSetting,
     Conversation,
     Document,
-    DocumentStatus,
     Lead,
     LeadStatus,
-    Message,
     Operation,
     Project,
     Property,
@@ -171,7 +169,7 @@ async def login(data: LoginIn, request: Request) -> JSONResponse:
     async with AsyncSessionLocal() as session:
         db_user = await session.get(AdminUser, user.id)
         if db_user is not None:
-            db_user.last_login_at = datetime.now(timezone.utc)
+            db_user.last_login_at = datetime.now(UTC)
         await session.commit()
     await _audit(request, user, "login", "auth", str(user.id))
     response = JSONResponse(status_code=200, content={
@@ -265,6 +263,29 @@ async def health_ready() -> JSONResponse:
         errors["storage"] = str(e)[:200]
     ok = all(bool(v) for v in checks.values())
     return JSONResponse(status_code=200 if ok else 503, content={"ok": ok, "checks": checks, "errors": errors})
+
+
+@app.get("/agent/metrics")
+async def agent_metrics(user: AdminUser = Depends(require_permission("settings.read"))) -> dict:
+    """Observabilidad del agente: ¿el LLM está actuando realmente como cerebro?
+
+    Contadores en proceso + tasas derivadas (llm_usage_rate, fallback_rate,
+    tool_call_rate, rag_usage_rate…). No expone prompts, secretos ni datos de clientes.
+    """
+    from app.agents.metrics import METRICS
+    from app.agents.prompts_v2 import PROMPT_VERSION
+    from app.ai.llm import get_llm_provider
+
+    s = get_settings()
+    llm = get_llm_provider()
+    return {
+        "llm_mode": s.LLM_MODE,
+        "llm_first_enabled": s.llm_first_enabled,
+        "provider": llm.name if llm else "none",
+        "model": llm.model if llm else "",
+        "prompt_version": PROMPT_VERSION,
+        **METRICS.snapshot(),
+    }
 
 # ------------------------------------------------------------------ properties
 @app.get("/properties")

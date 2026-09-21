@@ -126,9 +126,9 @@ export default async function Logs({ searchParams }: PageProps) {
                   <tr>
                     <th>Fecha</th>
                     <th>Intención</th>
-                    <th>Modelo</th>
-                    <th>Herramientas</th>
-                    <th className="num">Latencia</th>
+                    <th className="table-responsive-hide-xs">Modelo</th>
+                    <th className="table-responsive-hide-sm">Herramientas</th>
+                    <th className="num table-responsive-hide-xs">Latencia</th>
                     <th>Estado</th>
                   </tr>
                 </thead>
@@ -142,11 +142,11 @@ export default async function Logs({ searchParams }: PageProps) {
                       <td>
                         <div className="cell-main">{intentLabel(e.intent)}</div>
                       </td>
-                      <td className="muted">{e.model}</td>
-                      <td className="muted">
+                      <td className="muted table-responsive-hide-xs">{e.model}</td>
+                      <td className="muted table-responsive-hide-sm">
                         {e.tools.map((t) => t.tool).join(", ") || "—"}
                       </td>
-                      <td className="num">{e.latency_ms} ms</td>
+                      <td className="num table-responsive-hide-xs">{e.latency_ms} ms</td>
                       <td>
                         <StatusBadge status={e.status.startsWith("ok") ? "ok" : "ERROR"} />
                       </td>

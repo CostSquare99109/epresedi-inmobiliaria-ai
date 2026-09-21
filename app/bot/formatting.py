@@ -1,7 +1,7 @@
 """Telegram text rendering. Deterministic, data-only: never invents values."""
 from __future__ import annotations
 
-from app.database.models import Property, PropertyStatus
+from app.database.models import Property
 
 STATUS_LABEL = {
     "AVAILABLE": "Disponible", "RESERVED": "Reservada", "SOLD": "Vendida", "INACTIVE": "Inactiva",

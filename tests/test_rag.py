@@ -4,6 +4,7 @@ from __future__ import annotations
 import uuid as uuid_mod
 
 import pytest
+from sqlalchemy import delete
 
 from app.rag import retrieval as rag_retrieval
 from app.rag.chunking import split_into_chunks
@@ -259,6 +260,12 @@ async def test_ingest_directory_is_idempotent(tmp_path, session):
     ).scalar()
     assert count == 1
     assert get_settings().DOCUMENTS_PATH.endswith("documents_test")
+
+    # ingest_directory commitea el doc en la BD compartida de sesión: borrarlo
+    # evita que el chunk "Proyecto Zeta … 42 apartamentos" contamine el corpus
+    # de RAG de OTROS tests (flakiness determinista en test_e2e full_journey).
+    await session.execute(delete(Document).where(Document.filename == f"doc_{marker}.txt"))
+    await session.commit()
 
 
 # ------------------------------------------------------------------ retrieval

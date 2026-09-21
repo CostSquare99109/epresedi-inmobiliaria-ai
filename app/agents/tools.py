@@ -18,7 +18,6 @@ from app.appointments import service as appt_service
 from app.core.logging import get_logger
 from app.crm import service as crm_service
 from app.database.models import Property
-from app.memory import service as memory_service
 from app.properties import repository as prop_repo
 from app.properties.search import SearchFilters, search_properties, similar_properties
 from app.rag import retrieval as rag_retrieval
@@ -49,6 +48,98 @@ ORDINALS = {"primera": 0, "primero": 0, "1": 0, "1ª": 0, "1a": 0,
             "segunda": 1, "segundo": 1, "2": 1, "2ª": 1, "2a": 1,
             "tercera": 2, "tercero": 2, "3": 2, "3ª": 2, "3a": 2,
             "cuarta": 3, "cuarto": 3, "4": 3, "quinta": 4, "quinto": 4, "5": 4}
+
+# ------------------------------------------------------------------ contact validation
+
+_REQUIRED_CONTACT_FIELDS = ("name", "phone", "email")
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PHONE_RE = re.compile(r"^[\d\s()+.-]{7,}$")
+
+# Preferencias que el LLM declaró explícitamente en update_conversation_state
+# (campos validados por FIELD_SPECS) → columnas de user_preferences.
+# Es el reemplazo de la auto-persistencia ciega eliminada de search_properties:
+# solo se guarda lo declarado y validado, nunca lo que una búsqueda exploratoria
+# filtró por su cuenta.
+_PREFERENCE_FIELDS = {
+    "city": "city",
+    "property_type": "property_type",
+    "operation": "operation",
+    "budget_min": "min_price",
+    "budget_max": "max_price",
+    "bedrooms": "bedrooms",
+    "bathrooms": "bathrooms",
+    "parking": "parking",
+}
+
+
+async def _get_missing_contact_fields(session: AsyncSession, user_id: int) -> list[str]:
+    """Returns list of missing required contact fields for the lead."""
+    from app.crm import service as crm_service
+    lead = await crm_service.get_or_create_lead(session, user_id)
+    missing = []
+    if not lead.name or not lead.name.strip():
+        missing.append("name")
+    if not lead.phone or not _PHONE_RE.match(lead.phone.strip()):
+        missing.append("phone")
+    if not lead.email or not _EMAIL_RE.match(lead.email.strip()):
+        missing.append("email")
+    return missing
+
+
+async def _validate_and_update_contact(
+    session: AsyncSession, user_id: int, data: dict
+) -> tuple[bool, list[str]]:
+    """Validates and updates contact fields. Returns (all_present, missing_fields)."""
+    from app.crm import service as crm_service
+    
+    # Get current lead to check existing fields
+    lead = await crm_service.get_or_create_lead(session, user_id)
+    
+    # Update any provided fields
+    update_data = {}
+    if data.get("name"):
+        name = str(data["name"]).strip()
+        if len(name) >= 3 and len(name.split()) >= 2:
+            update_data["name"] = name[:160]
+    elif lead.name and lead.name.strip():
+        update_data["name"] = lead.name.strip()
+    
+    if data.get("phone"):
+        phone = str(data["phone"]).strip()
+        if _PHONE_RE.match(phone):
+            update_data["phone"] = phone[:40]
+    elif lead.phone and lead.phone.strip():
+        update_data["phone"] = lead.phone.strip()
+    
+    if data.get("email"):
+        email = str(data["email"]).strip().lower()
+        if _EMAIL_RE.match(email):
+            update_data["email"] = email[:160]
+    elif lead.email and lead.email.strip():
+        update_data["email"] = lead.email.strip()
+    
+    if update_data:
+        await crm_service.update_lead(session, lead.id, update_data)
+        # Refresh lead to get updated values
+        lead = await crm_service.get_or_create_lead(session, user_id)
+    
+    # Check for missing required fields
+    missing = []
+    if not lead.name or not lead.name.strip():
+        missing.append("name")
+    if not lead.phone or not _PHONE_RE.match(lead.phone.strip()):
+        missing.append("phone")
+    if not lead.email or not _EMAIL_RE.match(lead.email.strip()):
+        missing.append("email")
+    
+    return len(missing) == 0, missing
+
+
+def _format_missing_fields(missing: list[str]) -> str:
+    """Formats missing fields for user-friendly message."""
+    labels = {"name": "nombre completo", "phone": "teléfono", "email": "correo electrónico"}
+    return ", ".join(labels.get(f, f) for f in missing)
 
 
 async def _find_property(session: AsyncSession, ctx: ToolContext, ref: Any) -> Property | None:
@@ -91,6 +182,12 @@ async def _find_property(session: AsyncSession, ctx: ToolContext, ref: Any) -> P
         prop = None
     if prop is None:
         prop = await prop_repo.get_property_by_code(session, ref)
+    # Try numeric shorthand: "8" -> "PROP-0008"
+    if prop is None and ref.isdigit():
+        for fmt in (f"PROP-{int(ref):04d}", f"PROP-{int(ref):03d}", f"PROP-{int(ref)}"):
+            prop = await prop_repo.get_property_by_code(session, fmt)
+            if prop is not None:
+                break
     if prop is None and last:
         for item in last:
             if ref.lower() in (item.get("code", "").lower(), item.get("title", "").lower()):
@@ -108,7 +205,36 @@ async def _validate_real_slot(
     citas ocupadas, ≥2h de anticipación). Devuelve None si coincide exactamente
     con un slot disponible; si no, devuelve un envelope de error estructurado
     con `nearest_slots` y `slots` para que el agente re-decida con evidencia.
+    
+    Diferencia tres casos:
+    A. Horario permitido y disponible → None (OK)
+    B. Horario NO permitido (fuera de horario comercial o domingo) → error con reason="business_hours"
+    C. Horario permitido pero ocupado → error con reason="booked" + nearest_slots
     """
+    # First check business hours (category B)
+    from app.core.bizconfig import is_within_business_hours
+    when_utc = when
+    if when_utc.tzinfo is None:
+        from app.appointments.service import _business_timezone
+        tz = await _business_timezone()
+        when_utc = when_utc.replace(tzinfo=tz).astimezone(dt.UTC)
+    
+    is_within, reason = await is_within_business_hours(when_utc)
+    if not is_within:
+        # Category B: outside business hours
+        return {
+            "ok": False,
+            "error": reason,
+            "reason": "business_hours",
+            "nearest_slots": [],
+            "nearest_slots_count": 0,
+            "nearest_slots_omitted": 0,
+            "slots": [],
+            "available_slots_count": 0,
+            "slots_omitted": 0,
+        }
+    
+    # Category A or C: within business hours, check availability
     validation = await appt_service.list_available_slots(
         session, property_id, requested_datetime=when
     )
@@ -116,15 +242,26 @@ async def _validate_real_slot(
         return None
     slots = validation.get("available_slots", []) if isinstance(validation, dict) else []
     nearest = validation.get("nearest_slots", []) if isinstance(validation, dict) else []
+    # Cap evidencia para garantizar que el envelope de error quepa íntegro en
+    # el contexto (LLM_TOOL_RESULT_MAX_CHARS); si se excede, el runtime
+    # descarta TODO el data y el agente no puede re-decidir con evidencia.
+    _MAX_SHOWN = 8
+    total = len(slots)
+    extras = len(nearest)
     return {
         "ok": False,
         "error": (
-            "Ese horario no es un slot disponible (horario laboral, sin citas "
-            "ocupadas y con al menos 2 horas de anticipación). Ofrece uno de "
+            "Ese horario está dentro del horario de atención pero no está disponible "
+            "(ya reservado o no cumple anticipación mínima). Ofrece uno de "
             "los horarios reales de 'nearest_slots' o 'slots'."
         ),
-        "nearest_slots": nearest,
-        "slots": slots,
+        "reason": "booked",
+        "nearest_slots": nearest[:_MAX_SHOWN],
+        "nearest_slots_count": extras,
+        "nearest_slots_omitted": max(0, extras - _MAX_SHOWN),
+        "slots": slots[:_MAX_SHOWN],
+        "available_slots_count": total,
+        "slots_omitted": max(0, total - _MAX_SHOWN),
     }
 
 
@@ -198,6 +335,25 @@ def tool_envelope(name: str, result: dict[str, Any], *, max_chars: int = 4000) -
                     break
         if name == "search_properties":
             metadata["note"] = "si count=0, informa al usuario y pregunta si quiere ajustar criterios; NO repitas búsqueda sin confirmación"
+        if name == "list_available_slots":
+            slots_data = data.get("slots_data", {})
+            if slots_data.get("exact_match") or slots_data.get("is_available"):
+                exact_local = slots_data.get("exact_slot_local") or slots_data.get("exact_slot", {}).get("datetime_local")
+                metadata["note"] = f"DISPONIBLE: el horario solicitado SÍ está disponible (is_available=true). exact_slot_local = {exact_local}. Confirma disponibilidad al usuario y agenda si el usuario quiere."
+            elif slots_data.get("nearest_slots"):
+                metadata["note"] = f"NO exact_match. nearest_slots tiene {len(slots_data.get('nearest_slots', []))} alternativas cercanas. Ofrece al usuario."
+        if name == "schedule_visit":
+            appt = data.get("appointment")
+            if appt:
+                status = appt.get("status", "REQUESTED")
+                metadata["note"] = (
+                    f"Cita creada con estado: {status}. "
+                    + ("ESTADO = REQUESTED (pendiente de confirmación del asesor). "
+                       "NO digas 'confirmada' ni 'queda todo confirmado'. "
+                       "Di: 'Tu solicitud de cita quedó registrada (pendiente de confirmación del asesor)'."
+                       if status == "REQUESTED"
+                       else "Estado confirmado por el asesor.")
+                )
         if metadata:
             envelope["metadata"] = metadata
     else:
@@ -351,7 +507,7 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
             ]
 
     elif name == "get_property_images":
-        from app.api.files import list_property_images
+        from app.api.files import list_property_images, property_images_dir
 
         prop = await _find_property(session, ctx, args.get("property_id"))
         if prop is None:
@@ -362,7 +518,12 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
                 "error": "Propiedad no encontrada o referencia ambigua.",
             }
         else:
-            result["images"] = list_property_images(str(prop.id))
+            filenames = list_property_images(str(prop.id))
+            limit = args.get("limit")
+            if isinstance(limit, int) and limit > 0:
+                filenames = filenames[:limit]
+            base = property_images_dir(str(prop.id))
+            result["images"] = [str(base / f) for f in filenames]
             result["property_id"] = str(prop.id)
             result["property_code"] = prop.code
 
@@ -392,7 +553,7 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
 
     elif name == "create_lead":
         lead = await crm_service.get_or_create_lead(session, ctx.user_id)
-        data = {k: v for k, v in args.items() if k in ("name", "phone", "budget", "status", "notes")}
+        data = {k: v for k, v in args.items() if k in ("name", "phone", "email", "budget", "status", "notes")}
         await crm_service.update_lead(session, lead.id, data)
         result["lead"] = await crm_service.get_customer_profile(session, ctx.user_id)
 
@@ -414,13 +575,34 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
             slots_result = await appt_service.list_available_slots(
                 session, prop.id, requested_datetime=requested_datetime, window_hours=window_hours
             )
-            # Backward compatibility: if requested_datetime not provided, service returns list
-            # If provided, service returns dict with structured data
             if isinstance(slots_result, list):
-                result["slots"] = slots_result
+                result["slots"] = slots_result  # backward compat
+                # No slots_data when no requested_datetime (test expectation)
             else:
-                result["slots"] = slots_result.get("available_slots", [])
-                result["slots_data"] = slots_result
+                available_slots = slots_result.get("available_slots", [])
+                result["slots"] = available_slots[:20]  # backward compat
+                if requested_datetime is not None:
+                    exact_match = slots_result.get("exact_match", False)
+                    exact_slot = slots_result.get("exact_slot")
+                    # Put availability at top level for LLM visibility
+                    result["available"] = exact_match
+                    result["slot_local"] = exact_slot.get("datetime_local") if exact_slot else None
+                    result["summary"] = (
+                        f"EL HORARIO SOLICITADO {'SÍ' if exact_match else 'NO'} ESTÁ DISPONIBLE. "
+                        f"Slot local: {exact_slot.get('datetime_local') if exact_slot else 'N/A'}. "
+                        f"Alternativas cercanas: {len(slots_result.get('nearest_slots', []))}. "
+                        f"Total slots libres: {len(available_slots)}."
+                    )
+                    result["slots_data"] = {
+                        "requested_datetime": slots_result.get("requested_datetime"),
+                        "exact_match": exact_match,
+                        "is_available": exact_match,
+                        "exact_slot": exact_slot,
+                        "exact_slot_local": exact_slot.get("datetime_local") if exact_slot else None,
+                        "nearest_slots": slots_result.get("nearest_slots", []),
+                        "available_slots_count": len(available_slots),
+                    }
+                # When no requested_datetime, don't include slots_data (test expectation)
 
     elif name == "schedule_visit":
         prop = await _find_property(session, ctx, args.get("property_id"))
@@ -437,21 +619,31 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
                 if invalid_slot is not None:
                     result = invalid_slot
                 else:
-                    lead = await crm_service.get_or_create_lead(session, ctx.user_id)
-                    try:
-                        appt = await appt_service.create_appointment(
-                            session, property_id=prop.id, lead_id=lead.id,
-                            scheduled_at=when, notes=str(args.get("notes") or ""),
-                        )
-                        await crm_service.set_lead_status_from_appointment(session, lead.id)
-                        ctx.state["last_appointment_id"] = str(appt.id)
-                        result["appointment"] = {
-                            "id": str(appt.id), "property": prop.title, "code": prop.code,
-                            "scheduled_at": appt.scheduled_at.isoformat(), "status": appt.status.value,
+                    # Validate required contact info before scheduling
+                    has_all, missing = await _validate_and_update_contact(session, ctx.user_id, args)
+                    if not has_all:
+                        result = {
+                            "ok": False,
+                            "error": f"Faltan datos de contacto para agendar: {_format_missing_fields(missing)}.",
+                            "missing_fields": missing,
+                            "code": "MISSING_CONTACT_INFO",
                         }
-                    except appt_service.SlotUnavailable as e:
-                        result = {"ok": False, "error": str(e),
-                                  "slots": await appt_service.list_available_slots(session, prop.id)}
+                    else:
+                        lead = await crm_service.get_or_create_lead(session, ctx.user_id)
+                        try:
+                            appt = await appt_service.create_appointment(
+                                session, property_id=prop.id, lead_id=lead.id,
+                                scheduled_at=when, notes=str(args.get("notes") or ""),
+                            )
+                            await crm_service.set_lead_status_from_appointment(session, lead.id)
+                            ctx.state["last_appointment_id"] = str(appt.id)
+                            result["appointment"] = {
+                                "id": str(appt.id), "property": prop.title, "code": prop.code,
+                                "scheduled_at": appt.scheduled_at.isoformat(), "status": appt.status.value,
+                            }
+                        except appt_service.SlotUnavailable as e:
+                            result = {"ok": False, "error": str(e),
+                                      "slots": await appt_service.list_available_slots(session, prop.id)}
 
     elif name == "cancel_appointment":
         ok = False
@@ -503,6 +695,13 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
         METRICS.inc("state_updates")
         if rejected:
             METRICS.inc("state_update_rejections", len(rejected))
+        prefs_patch = {
+            dst: applied[src] for src, dst in _PREFERENCE_FIELDS.items() if src in applied
+        }
+        if prefs_patch:
+            from app.memory import service as memory_service
+
+            await memory_service.update_preferences(session, ctx.user_id, prefs_patch)
 
     elif name == "list_appointments":
         lead = await crm_service.get_or_create_lead(session, ctx.user_id)

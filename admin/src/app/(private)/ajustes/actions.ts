@@ -46,6 +46,7 @@ export async function updateSettings(
       body: JSON.stringify({ settings }),
     });
     revalidatePath("/ajustes");
+    revalidatePath("/configuracion");
     return { ok: true, updated: result.updated };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

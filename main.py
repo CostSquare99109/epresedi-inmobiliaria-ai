@@ -10,8 +10,8 @@ import asyncio
 import os
 import shutil
 import signal
-import subprocess
 import socket
+import subprocess
 import sys
 
 from app.core.logging import get_logger, setup_logging
@@ -154,12 +154,16 @@ async def run() -> None:
     s = get_settings()
     llm = get_llm_provider()
     if llm is None:
-        log.warning(
-            "llm_mode=deterministic (sin NVIDIA_API_KEY o NVIDIA_MODEL) — "
-            "respuestas basadas 100% en datos reales"
+        log.error(
+            "LLM obligatorio: no hay proveedor configurado. "
+            "La arquitectura LLM-FIRST PURO requiere NVIDIA_API_KEY + NVIDIA_MODEL. "
+            "Configura las credenciales en .env."
         )
-    else:
-        log.info("llm_provider=nvidia model=%s", llm.model)
+        raise RuntimeError("LLM provider not configured. Set NVIDIA_API_KEY and NVIDIA_MODEL in .env")
+    log.info(
+        "llm_mode=%s provider=%s model=%s",
+        s.LLM_MODE, llm.name, llm.model,
+    )
     orchestrator = Orchestrator(llm=llm)
     handlers.register_orchestrator(orchestrator)
     from app.api import routes
@@ -224,7 +228,7 @@ async def run() -> None:
     server.should_exit = True
     try:
         await asyncio.wait_for(api_task, timeout=10)
-    except (asyncio.TimeoutError, asyncio.CancelledError):
+    except (TimeoutError, asyncio.CancelledError):
         pass
     for task in (worker_task, scheduler_task):
         task.cancel()

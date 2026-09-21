@@ -6,7 +6,7 @@
 class LLMProvider(Protocol):
     name: str
     model: str
-    async def chat(messages, tools=None, temperature=0.2, max_tokens=900) -> LLMResponse
+    async def chat(messages, tools=None, temperature=0.2, max_tokens=4000, response_format=None) -> LLMResponse
 ```
 
 Implementación actual: `NVIDIAProvider` (`app/ai/llm.py`) — NVIDIA Build vía API compatible OpenAI (`POST {NVIDIA_BASE_URL}/chat/completions`) con tool calling estructurado (`tool_choice: auto`).
@@ -18,13 +18,16 @@ Cambiar de proveedor = implementar `LLMProvider`. El resto de la app no cambia.
 ```
 NVIDIA_API_KEY=...
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
-NVIDIA_MODEL=meta/llama-3.3-70b-instruct
+NVIDIA_MODEL=nvidia/nemotron-3-super-120b-a12b
 NVIDIA_TIMEOUT=60
-LLM_MODE=auto        # auto | nvidia | deterministic
+LLM_MODE=auto              # auto | nvidia | deterministic
+LLM_MAX_TOKENS=4000        # tokens máximos para respuesta del LLM (evita truncamiento en JSON complejo)
+LLM_REASONING_LEVEL=high   # reasoning effort: high | medium | low | minimal | none
 ```
 
 - `auto`: NVIDIA si hay key+modelo; motor determinista si no.
 - `deterministic`: nunca llama a la red; respuestas basadas 100% en datos reales.
+- `LLM_REASONING_LEVEL`: nivel de esfuerzo de razonamiento para modelos que lo soporten (NVIDIA Build usa `reasoning_effort` compatible con OpenAI). Valores: `high`, `medium`, `low`, `minimal`, `none`. Se ignora si el modelo/proveedor no lo soporta.
 
 ## Fallbacks de NVIDIA
 
@@ -38,11 +41,25 @@ LLM_MODE=auto        # auto | nvidia | deterministic
 
 En todos los casos: registra el error (`ai_events.status=llm_error:*`), responde con un mensaje controlado y permite recuperarse. No crea un proveedor cloud secundario automáticamente.
 
+## Manejo robusto de Structured Output
+
+El LLM debe devolver decisiones en JSON estructurado (contrato `LLM_DECISION_SCHEMA`). Para evitar `llm_structural_failure`:
+
+1. **max_tokens aumentado a 4000** para acomodar JSON completo sin truncamiento
+2. **Segundo pase sin tools** (`tools=None`) para forzar decisión final JSON
+3. **Reintentos controlados** para:
+   - `finish_reason == "length"` (truncamiento por tokens)
+   - JSON inválido (`parse_llm_response` falla)
+   - Respuesta vacía o muy corta (`response.text < 10 chars`)
+4. **Fallback de infraestructura** (`_build_fallback_reply`): si todos los reintentos fallan, genera respuesta segura basada en resultados reales de tools (no invención)
+5. **Logging detallado** para diagnóstico: `llm_structural_failure` registra `user_id`, `conversation_id`, `model`, `prompt_version`, `retries_exhausted`
+6. **Mensaje amigable al usuario**: "Tuve un inconveniente momentáneo al procesar tu mensaje. Intenta enviarlo nuevamente en unos segundos." — sin detalles técnicos internos
+
 ## Anti-alucinación (regla absoluta)
 
 La IA NO puede inventar propiedades, precios, disponibilidad, características, áreas, direcciones, financiación, documentos, citas ni reglas. Mecanismos:
 
-1. **System prompt versionado** (`app/agents/prompts.py`, PROMPT_VERSION en `ai_events`): «Si un dato no está en la información recuperada, di exactamente: "No tengo información confirmada sobre eso."»
+1. **System prompt versionado** (`app/agents/prompts_v2.py`, PROMPT_VERSION en `ai_events`): «Si un dato no está en la información recuperada, di exactamente: "No tengo información confirmada sobre eso."»
 2. **Los filtros críticos los resuelve el código** (`extract_filters` + SQL), no el modelo.
 3. **Respuesta determinista solo desde tool output** (sin LLM): las fichas/comparaciones se renderizan desde datos reales.
 4. **Atributos ambiguos → "no informado"**: una columna NULL es «No informado», nunca «no». Un 0 es un «no» confirmado.
@@ -77,6 +94,6 @@ La dimensión debe coincidir con la columna pgvector (`EMBEDDING_DIM=256`). Camb
 
 ## Contexto
 
-- Mensajes recientes (6) + preferencias persistentes + resumen rodante (`_summarize`).
+- Mensajes recientes (8) + preferencias persistentes + resumen rodante (`_summarize`).
 - Nunca se envía toda la conversación histórica indefinidamente.
 - Nunca se envían 1000 propiedades al modelo: primero candidatos SQL (límite 8), después solo la información necesaria.

@@ -4,13 +4,12 @@ from __future__ import annotations
 import uuid as uuid_mod
 
 import pytest
+from sqlalchemy import delete
 
 from app.api.files import image_path_or_none, save_property_image
-from app.database.base import AsyncSessionLocal
-from app.properties.search import SearchFilters, extract_filters, search_properties
-from app.rag.chunking import split_into_chunks
+from app.database.models import Document
+from app.properties.search import extract_filters, search_properties
 from app.rag.ingest import DocumentValidationError, safe_document_path, validate_document
-
 
 # ---------------------------------------------------------------- prompt injection
 INJECTION_DOC = (
@@ -32,10 +31,9 @@ INJECTION_PAYLOADS = [
 async def test_injected_document_is_data_not_instructions(session, user_id, monkeypatch):
     """A document containing injection must be retrievable as DATA and never
     change the system prompt or tool behavior."""
-    from app.rag.ingest import ingest_directory, process_document, save_document
-    import os
 
     from app.core.settings import get_settings
+    from app.rag.ingest import process_document, save_document
 
     s = get_settings()
     inbox = s.documents_dir / "inbox"
@@ -56,9 +54,19 @@ async def test_injected_document_is_data_not_instructions(session, user_id, monk
 
         # the agent answers from the document data, citing the source
         from app.agents.orchestrator import Orchestrator
-        from app.agents.intents import Intent
+        from tests.test_fake_llm_v2 import FakeLLMV2, LLMDecisionBuilder, final_decision, tc, tool_round
 
-        orch = Orchestrator(llm=None)
+        fake = FakeLLMV2([
+            tool_round(
+                tc("search_documents", {"query": "Proyecto Zeta apartamentos"}, call_id="c1"),
+            ),
+            final_decision(LLMDecisionBuilder(
+                intent="PROPERTY_DOCUMENT_QUESTION",
+                response_text="Según Doc inyección: El Proyecto Zeta tiene 77 apartamentos.",
+                conversation={"current_goal": "answer_document_question", "missing_fields": [], "next_action": "present_results", "phase": "GENERAL"},
+            )),
+        ])
+        orch = Orchestrator(llm=fake)
         reply = await orch.handle_user_message(
             session, user_id, "¿Cuántos apartamentos tiene el Proyecto Zeta?", "u", "U"
         )
@@ -67,7 +75,11 @@ async def test_injected_document_is_data_not_instructions(session, user_id, monk
     finally:
         try:
             (inbox / fname).unlink()
-            await session.rollback()
+            # La ingesta commitea el documento en la BD compartida de sesión:
+            # sin este borrado, el chunk de "Proyecto Zeta" contaminaría el
+            # corpus de RAG de OTROS tests (flakiness de test_e2e full_journey).
+            await session.execute(delete(Document).where(Document.filename == fname))
+            await session.commit()
         except Exception:
             pass
 

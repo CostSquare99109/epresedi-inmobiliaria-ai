@@ -1,6 +1,6 @@
 # Panel administrativo (`admin/`)
 
-Guía del rediseño del panel interno de EXPRESEDI Inmobiliaria (Next.js 15 + React 19 + TypeScript, App Router). El backend es la API FastAPI local (`python main.py`, puerto 8000); el panel nunca expone `ADMIN_TOKEN` al navegador.
+Guía del rediseño del panel interno de epresedi Inmobiliaria (Next.js 15 + React 19 + TypeScript, App Router). El backend es la API FastAPI local (`python main.py`, puerto 8000); el panel nunca expone `ADMIN_TOKEN` al navegador.
 
 ## 1. Arquitectura Server / Client
 

@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { RefreshButton } from "@/components/RefreshButton";
+import { DeleteButton } from "@/components/DeleteButton";
 import { Icon } from "@/components/icons";
 import Link from "next/link";
 
@@ -110,10 +111,10 @@ export default async function Proyectos({ searchParams }: PageProps) {
               <thead>
                 <tr>
                   <th>Proyecto</th>
-                  <th>Ciudad</th>
-                  <th className="num">Propiedades</th>
-                  <th>Creado</th>
-                  <th>Actualizado</th>
+                  <th className="table-responsive-hide-xs">Ciudad</th>
+                  <th className="num table-responsive-hide-xs">Propiedades</th>
+                  <th className="table-responsive-hide-sm">Creado</th>
+                  <th className="table-responsive-hide-sm">Actualizado</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
@@ -124,13 +125,13 @@ export default async function Proyectos({ searchParams }: PageProps) {
                       <div className="cell-main">{p.name}</div>
                       {p.description && <div className="cell-sub">{p.description.slice(0, 80)}</div>}
                     </td>
-                    <td>{p.city || "—"}</td>
-                    <td className="num">{p.property_count}</td>
-                    <td>
+                    <td className="table-responsive-hide-xs">{p.city || "—"}</td>
+                    <td className="num table-responsive-hide-xs">{p.property_count}</td>
+                    <td className="table-responsive-hide-sm">
                       <div className="cell-main">{new Date(p.created_at).toLocaleDateString()}</div>
                       <div className="cell-sub">{new Date(p.created_at).toLocaleTimeString()}</div>
                     </td>
-                    <td>
+                    <td className="table-responsive-hide-sm">
                       <div className="cell-main">{new Date(p.updated_at).toLocaleDateString()}</div>
                       <div className="cell-sub">{new Date(p.updated_at).toLocaleTimeString()}</div>
                     </td>
@@ -139,18 +140,11 @@ export default async function Proyectos({ searchParams }: PageProps) {
                         <Link href={`/proyectos/${p.id}/editar`} className="btn btn-secondary btn-sm">
                           <Icon name="edit" size={14} /> Editar
                         </Link>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-danger-ghost btn-sm"
-                          onClick={() => {
-                            if (confirm(`¿Eliminar el proyecto "${p.name}"? Esta acción no se puede deshacer.`)) {
-                              window.location.href = `/api/proxy/projects/${p.id}?_method=DELETE`;
-                            }
-                          }}
-                          aria-label={`Eliminar ${p.name}`}
-                        >
-                          <Icon name="trash" size={14} />
-                        </button>
+                        <DeleteButton
+                          name={p.name}
+                          href={`/api/proxy/projects/${p.id}?_method=DELETE`}
+                          ariaLabel={`Eliminar ${p.name}`}
+                        />
                       </div>
                     </td>
                   </tr>

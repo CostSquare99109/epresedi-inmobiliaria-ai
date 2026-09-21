@@ -61,7 +61,7 @@ export default function LoginPage() {
                 <Icon name="home" size={20} />
               </span>
               <div className="login-brand-text">
-                <h1 className="login-title">EXPRESEDI</h1>
+                <h1 className="login-title">epresedi</h1>
                 <p className="login-subtitle">Inmobiliaria</p>
               </div>
             </div>
@@ -97,6 +97,7 @@ export default function LoginPage() {
               className="login-submit"
               loading={loading}
               size="lg"
+              variant="primary"
             >
               {loading ? "Accediendo..." : "Entrar"}
               <Icon name="log-in" size={16} />

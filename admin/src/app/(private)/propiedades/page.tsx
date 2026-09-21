@@ -218,11 +218,18 @@ const hasActiveFilters = Boolean(estado || ciudad || tipo || operacion || precio
                 {props.map((p, i) => (
                   <article key={p.id} className="property-card" role="listitem">
                     <div className="card-image">
-                      <PropertyThumb
-                        propertyId={p.id}
-                        filename={covers[i]}
-                        alt={`Foto de ${p.title}`}
-                      />
+                      {covers[i] ? (
+                        <img
+                          src={`/api/proxy/properties/${p.id}/images/${covers[i]}`}
+                          alt={`Foto de ${p.title}`}
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      ) : (
+                        <span className="card-image-fallback">
+                          <Icon name="building" size={22} />
+                        </span>
+                      )}
                       <div className="card-status-overlay">
                         <StatusBadge status={p.status} />
                       </div>
@@ -291,11 +298,11 @@ const hasActiveFilters = Boolean(estado || ciudad || tipo || operacion || precio
                       <tr>
                         <th><span className="visually-hidden">Foto</span></th>
                         <th>Inmueble</th>
-                        <th>Tipo</th>
+                        <th className="table-responsive-hide-sm">Tipo</th>
                         <th className="num">Precio</th>
-                        <th className="num">Área</th>
-                        <th className="num">Hab.</th>
-                        <th className="num">Baños</th>
+                        <th className="num table-responsive-hide-md">Área</th>
+                        <th className="num table-responsive-hide-xs">Hab.</th>
+                        <th className="num table-responsive-hide-xs">Baños</th>
                         <th>Estado</th>
                         <th className="actions-col"><span className="visually-hidden">Acciones</span></th>
                       </tr>
@@ -317,14 +324,14 @@ const hasActiveFilters = Boolean(estado || ciudad || tipo || operacion || precio
                               {p.neighborhood ? ` · ${p.neighborhood}` : ""}
                             </div>
                           </td>
-                          <td>
+                          <td className="table-responsive-hide-sm">
                             <div className="cell-main">{p.property_type}</div>
                             <div className="cell-sub">{operationLabel(p.operation)}</div>
                           </td>
                           <td className="num">{formatMoney(p.price, p.currency)}</td>
-                          <td className="num">{p.area_m2 ? `${p.area_m2} m²` : "—"}</td>
-                          <td className="num">{p.bedrooms ?? "—"}</td>
-                          <td className="num">{p.bathrooms ?? "—"}</td>
+                          <td className="num table-responsive-hide-md">{p.area_m2 ? `${p.area_m2} m²` : "—"}</td>
+                          <td className="num table-responsive-hide-xs">{p.bedrooms ?? "—"}</td>
+                          <td className="num table-responsive-hide-xs">{p.bathrooms ?? "—"}</td>
                           <td>
                             <div className="status-cell">
                               <StatusBadge status={p.status} />

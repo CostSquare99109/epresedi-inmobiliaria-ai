@@ -9,10 +9,8 @@ import datetime as dt
 
 from app.core.logging import get_logger
 from app.database.base import AsyncSessionLocal
-from app.database.models import PropertyStatus, Property
 from app.properties.search import match_saved_search
 from app.workers import queue
-from sqlalchemy import select
 
 log = get_logger(__name__)
 
@@ -26,8 +24,9 @@ async def _job_document_ingestion(payload: dict | None = None) -> dict:
 
 
 async def _job_process_document(payload: dict) -> dict:
-    from app.rag.ingest import process_document
     import uuid as uuid_mod
+
+    from app.rag.ingest import process_document
 
     async with AsyncSessionLocal() as session:
         doc = await process_document(session, uuid_mod.UUID(payload["document_id"]))
@@ -120,7 +119,7 @@ async def run_scheduler(stop_event: asyncio.Event, interval_seconds: int = 3600)
     while not stop_event.is_set():
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         if stop_event.is_set():
             break

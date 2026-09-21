@@ -3,8 +3,8 @@ import "../globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "EXPRESEDI Inmobiliaria · Acceso",
-    template: "%s · EXPRESEDI Inmobiliaria",
+    default: "epresedi Inmobiliaria · Acceso",
+    template: "%s · epresedi Inmobiliaria",
   },
   description: "Panel administrativo interno - Iniciar sesión",
   robots: { index: false, follow: false },

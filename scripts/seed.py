@@ -290,7 +290,6 @@ def _assert_safe_to_wipe() -> None:
 
 
 async def seed() -> dict:
-    from app.properties.repository import create_property, sync_property_embedding
     from app.rag.ingest import ingest_directory
 
     _assert_safe_to_wipe()

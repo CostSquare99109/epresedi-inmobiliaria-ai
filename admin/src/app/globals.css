@@ -1,5 +1,5 @@
 /* ============================================================
-   EXPRESEDI Inmobiliaria · Panel administrativo
+   epresedi Inmobiliaria · Panel administrativo
    Sistema de diseño: tokens → base → shell → componentes
    Principio: REAL ESTATE PROFESSIONAL PRODUCT
    menos decoración, más producto.
@@ -45,14 +45,14 @@
     "Helvetica Neue", Arial, sans-serif;
 
   /* Escala tipográfica
-     display 26 · h2 16 · h3 14.5 · body 14 · small 13 · caption 12 · label 11 */
+     display 26 · h2 16 · h3 14.5 · body 14 · small 13 · caption 13 · label 12 */
   --fs-display: 26px;
   --fs-h2: 16px;
   --fs-h3: 14.5px;
   --fs-body: 14px;
   --fs-small: 13px;
-  --fs-caption: 12px;
-  --fs-label: 11px;
+  --fs-caption: 13px;
+  --fs-label: 12px;
 
   /* Escala de espaciado (4 px) */
   --sp-1: 4px;
@@ -319,14 +319,15 @@ a {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: 7px var(--sp-2);
+  padding: 12px var(--sp-3);
   border-radius: var(--radius-sm);
   color: var(--fg);
   text-decoration: none;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 450;
   transition: background-color var(--t) var(--ease),
     color var(--t) var(--ease);
+  min-height: 44px;
 }
 
 .nav-item svg {
@@ -491,8 +492,8 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -507,15 +508,25 @@ a {
 
 /* Button sizes */
 .btn-sm {
-  padding: 5px 10px;
-  font-size: 12px;
-  min-height: 28px;
+  padding: 8px 12px;
+  font-size: 13px;
+  min-height: 40px;
+}
+
+.btn-md {
+  padding: 10px 16px;
+  font-size: 13px;
+  min-height: 44px;
 }
 
 .btn-lg {
-  padding: 10px 20px;
+  padding: 12px 20px;
   font-size: 14px;
-  min-height: 42px;
+  min-height: 48px;
+}
+
+.btn {
+  min-height: 44px;
 }
 
 /* Button loading state */
@@ -548,6 +559,27 @@ a {
   to { transform: rotate(360deg); }
 }
 
+/* Status control spinner (for PropertyStatusControl select) */
+.status-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-spinner {
+  position: absolute;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  pointer-events: none;
+}
+
+.status-spinner svg {
+  animation: spin 0.8s linear infinite;
+}
+
 /* Button icon positioning */
 .btn-icon-left,
 .btn-icon-right {
@@ -564,15 +596,18 @@ a {
 
 select,
 input[type="text"],
-input[type="search"] {
+input[type="search"],
+input[type="email"],
+input[type="password"],
+input[type="number"] {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--fg);
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  padding: 7px 10px;
-  min-height: 34px;
+  padding: 10px 12px;
+  min-height: 44px;
   transition: border-color var(--t) var(--ease),
     box-shadow var(--t) var(--ease);
 }
@@ -592,9 +627,9 @@ input[type="search"]:focus-visible {
 }
 
 .select-sm {
-  padding: 4px 8px;
-  min-height: 28px;
-  font-size: 12.5px;
+  padding: 8px 10px;
+  min-height: 40px;
+  font-size: 13px;
 }
 
 /* Input component wrapper (used by Input.tsx) */
@@ -613,13 +648,13 @@ input[type="search"]:focus-visible {
 
 .form-input {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--fg);
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  padding: 7px 10px;
-  min-height: 34px;
+  padding: 10px 12px;
+  min-height: 44px;
   transition: border-color var(--t) var(--ease),
     box-shadow var(--t) var(--ease);
 }
@@ -1241,7 +1276,8 @@ a.stat-card:hover {
 
 .search-field input {
   padding-left: 32px;
-  width: 240px;
+  width: 280px;
+  max-width: 100%;
 }
 
 /* ------------------------------------------------------------
@@ -1275,14 +1311,16 @@ a.stat-card:hover {
   border: 1px solid var(--border-strong);
   background: var(--surface);
   border-radius: var(--radius-sm);
-  padding: 5px 12px;
-  font-size: 12.5px;
+  padding: 8px 14px;
+  font-size: 13px;
   font-weight: 550;
   color: var(--fg);
   text-decoration: none;
   cursor: pointer;
   font-family: var(--font-sans);
   transition: background-color var(--t) var(--ease);
+  min-height: 44px;
+  min-width: 44px;
 }
 
 .page-btn:hover:not(.disabled) {
@@ -1313,8 +1351,8 @@ a.stat-card:hover {
   }
   
   .page-btn {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 48px;
+    min-height: 48px;
     padding: var(--sp-2) var(--sp-3);
   }
 }
@@ -1478,6 +1516,25 @@ td .cell-main {
   }
 }
 
+/* Responsive table columns - hide less critical on mobile */
+@media (max-width: 1023px) {
+  .table-responsive-hide-md {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .table-responsive-hide-sm {
+    display: none;
+  }
+}
+
+@media (max-width: 599px) {
+  .table-responsive-hide-xs {
+    display: none;
+  }
+}
+
 /* Row hover no afecta columna sticky */
 tbody tr:hover td.actions-col {
   background: var(--surface);
@@ -1629,6 +1686,15 @@ tbody tr:hover td.actions-col {
 }
 
 .card-image .thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--idle);
+}
+
+.card-image-fallback {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1990,9 +2056,15 @@ tbody tr:hover td.actions-col {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--sp-3);
   align-items: end;
+}
+
+@media (max-width: 599px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .form-actions {
@@ -2041,6 +2113,101 @@ tbody tr:hover td.actions-col {
 }
 
 /* ------------------------------------------------------------
+   17.5. Selectores de horario (citas)
+   ------------------------------------------------------------ */
+.slots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--sp-2);
+}
+
+.slot-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: var(--fs-small);
+  font-weight: 550;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background-color var(--t) var(--ease),
+    border-color var(--t) var(--ease), color var(--t) var(--ease);
+  min-height: 40px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.slot-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--primary-border);
+}
+
+.slot-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.slot-btn.selected {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.slot-btn.selected:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.slot-btn.selecting {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.slot-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.slot-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slot-spinner svg {
+  animation: spin 0.8s linear infinite;
+}
+
+.no-slots {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  padding: var(--sp-3);
+  text-align: center;
+}
+
+.loading-slots {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.loading-slots::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--primary);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ------------------------------------------------------------
    18. Estados: vacío, carga, esqueletos
    ------------------------------------------------------------ */
 .empty {
@@ -2048,22 +2215,22 @@ tbody tr:hover td.actions-col {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: var(--sp-1);
-  padding: var(--sp-6) var(--sp-4);
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-4);
 }
 
 .empty.bordered {
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-lg);
-  margin: 0 var(--sp-5) var(--sp-5);
+  margin: 0 var(--sp-4) var(--sp-4);
 }
 
 .empty-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   background: var(--surface-2);
   color: var(--idle);
@@ -2659,4 +2826,1006 @@ tbody tr:hover td.actions-col {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+}
+
+/* ------------------------------------------------------------
+   24. Property Detail
+   ------------------------------------------------------------ */
+.property-detail {
+  width: 100%;
+}
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.detail-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.detail-code {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.detail-type,
+.detail-operation {
+  color: var(--fg);
+}
+
+.detail-price {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--primary);
+  line-height: 1.1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: var(--sp-5);
+  align-items: start;
+}
+
+@media (max-width: 1023px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.detail-main {
+  min-width: 0;
+}
+
+.detail-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.sticky-sidebar {
+  position: sticky;
+  top: calc(46px + var(--sp-5));
+}
+
+@media (max-width: 1023px) {
+  .sticky-sidebar {
+    position: static;
+  }
+}
+
+.detail-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.info-section {
+  padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.info-section:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.info-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-h3);
+  font-weight: 650;
+  margin-bottom: var(--sp-3);
+  color: var(--fg);
+}
+
+.info-heading svg {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.info-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.info-list div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.info-list dt {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.info-list dd {
+  font-size: var(--fs-small);
+  color: var(--fg);
+  margin: 0;
+}
+
+.features-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.features-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-small);
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+}
+
+.features-list li svg {
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+.description-text {
+  color: var(--fg);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.status-display {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.status-display .status-badge {
+  font-size: var(--fs-small);
+  padding: 6px 14px;
+}
+
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.action-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  text-decoration: none;
+  font-size: var(--fs-small);
+  font-weight: 550;
+  transition: background-color var(--t) var(--ease), border-color var(--t) var(--ease), color var(--t) var(--ease);
+  width: 100%;
+  text-align: left;
+}
+
+.action-item:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.action-item svg {
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: color var(--t) var(--ease);
+}
+
+.action-item:hover svg {
+  color: var(--fg);
+}
+
+.action-item.action-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.action-item.action-danger:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.action-item.action-danger svg {
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------
+   25. Property Image Gallery
+   ------------------------------------------------------------ */
+.image-gallery-section {
+  width: 100%;
+}
+
+.gallery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-4);
+}
+
+.gallery-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-h3);
+  font-weight: 650;
+  margin: 0;
+}
+
+.gallery-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.gallery-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-6) var(--sp-4);
+  text-align: center;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.gallery-empty svg {
+  color: var(--idle);
+}
+
+.gallery-empty p {
+  margin: 0;
+  font-size: var(--fs-small);
+}
+
+.image-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--sp-3);
+}
+
+.image-gallery.dragging .image-item {
+  opacity: 0.5;
+}
+
+.image-gallery.dragging .image-item.drag-over {
+  opacity: 1;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.image-item {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+}
+
+.image-item.is-cover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary-soft);
+}
+
+.image-item.drag-over {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.image-wrapper {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.image-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform var(--t-slow) var(--ease);
+}
+
+.image-item:hover .image-thumb {
+  transform: scale(1.03);
+}
+
+.cover-badge {
+  position: absolute;
+  top: var(--sp-2);
+  left: var(--sp-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--primary);
+  color: #fff;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.cover-badge svg {
+  flex-shrink: 0;
+}
+
+.image-controls {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--t) var(--ease);
+}
+
+.image-item:hover .image-controls,
+.image-item:focus-within .image-controls {
+  opacity: 1;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background-color var(--t) var(--ease), border-color var(--t) var(--ease), color var(--t) var(--ease);
+}
+
+.icon-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.icon-btn.danger:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.image-index {
+  position: absolute;
+  bottom: var(--sp-2);
+  right: var(--sp-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(29, 32, 28, 0.6);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.skeleton-image {
+  height: 140px;
+  border-radius: var(--radius);
+  background: linear-gradient(100deg, var(--surface-2) 40%, #eceee6 50%, var(--surface-2) 60%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* ------------------------------------------------------------
+   26. Property Form
+   ------------------------------------------------------------ */
+.property-form-container {
+  width: 100%;
+  max-width: 900px;
+}
+
+.property-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-h3);
+  font-weight: 650;
+  color: var(--fg);
+  margin: 0;
+}
+
+.section-title svg {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.form-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border);
+  margin-top: var(--sp-2);
+}
+
+.image-upload {
+  margin-bottom: var(--sp-4);
+}
+
+.image-upload-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+}
+
+.uploading {
+  margin-left: var(--sp-3);
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+/* ------------------------------------------------------------
+   27. Form Components: textarea, select, checkbox-group
+   ------------------------------------------------------------ */
+.form-textarea {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  min-height: 100px;
+  resize: vertical;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-textarea:hover {
+  border-color: #a3a89b;
+}
+
+.form-textarea:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  outline: none;
+}
+
+.form-field.has-error .form-textarea {
+  border-color: var(--danger);
+}
+
+.form-field.has-error .form-textarea:focus-visible {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.form-select {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  min-height: 44px;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-select:hover {
+  border-color: #a3a89b;
+}
+
+.form-select:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  outline: none;
+}
+
+.form-field.has-error .form-select {
+  border-color: var(--danger);
+}
+
+.form-field.has-error .form-select:focus-visible {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.select-sm.form-select {
+  padding: 8px 10px;
+  min-height: 40px;
+  font-size: 13px;
+}
+
+.checkbox-group {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.checkbox-group-1 {
+  grid-template-columns: 1fr;
+}
+
+.checkbox-group-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.checkbox-group-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.checkbox-group-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 768px) {
+  .checkbox-group-3,
+  .checkbox-group-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 599px) {
+  .checkbox-group-2,
+  .checkbox-group-3,
+  .checkbox-group-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.checkbox-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--t-fast) var(--ease);
+}
+
+.checkbox-item:hover {
+  background: var(--surface-2);
+}
+
+.checkbox-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.checkbox-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--surface);
+  transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  flex-shrink: 0;
+}
+
+.checkbox-input:checked + .checkbox-check {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.checkbox-input:focus-visible + .checkbox-check {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.checkbox-label {
+  font-size: var(--fs-small);
+  color: var(--fg);
+  user-select: none;
+}
+
+/* ------------------------------------------------------------
+   28. Admin Users Page - Status Styles
+   ------------------------------------------------------------ */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.status-badge.status-success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-badge.status-warning {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.status-badge.status-info {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.status-badge.status-neutral {
+  background: var(--neutral-soft);
+  color: var(--neutral);
+}
+
+.status-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-inactive {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  background: var(--idle-soft);
+  color: #6d7369;
+}
+
+/* ------------------------------------------------------------
+   29. Document Filters (button-based filter-tabs)
+   ------------------------------------------------------------ */
+.filter-tabs button.filter-tab {
+  background: transparent;
+  border: 0;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--muted);
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color var(--t) var(--ease), color var(--t) var(--ease);
+}
+
+.filter-tabs button.filter-tab:hover {
+  color: var(--fg);
+}
+
+.filter-tabs button.filter-tab.active {
+  background: var(--surface);
+  color: var(--fg);
+  font-weight: 600;
+  box-shadow: var(--shadow-1);
+}
+
+.filter-tabs button.filter-tab .count {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+
+.filter-tabs button.filter-tab.active .count {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* ------------------------------------------------------------
+   30. Advanced Filters
+   ------------------------------------------------------------ */
+.advanced-filters {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-top: var(--sp-2);
+  overflow: hidden;
+}
+
+.advanced-filters summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-small);
+  font-weight: 550;
+  color: var(--fg);
+  cursor: pointer;
+  list-style: none;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.advanced-filters summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-filters summary svg {
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform var(--t) var(--ease);
+}
+
+.advanced-filters[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.advanced-filters summary:hover {
+  background: var(--surface);
+}
+
+.advanced-filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.filter-group label {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.filter-group input,
+.filter-group select {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  min-height: 34px;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+}
+
+.filter-group input:hover,
+.filter-group select:hover {
+  border-color: #a3a89b;
+}
+
+.filter-group input:focus-visible,
+.filter-group select:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  outline: none;
+}
+
+.filter-group input::placeholder {
+  color: var(--idle);
+}
+
+/* ------------------------------------------------------------
+   31. Inline Select (used in PropertyFilters)
+   ------------------------------------------------------------ */
+.inline-select {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 28px 5px 10px;
+  min-height: 34px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235f6660' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 18.5 15 12 9 5.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+}
+
+.inline-select:hover {
+  border-color: #a3a89b;
+}
+
+.inline-select:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  outline: none;
+}
+
+/* ------------------------------------------------------------
+   32. Search Field (used in PropertyFilters, Proyectos, Usuarios)
+   ------------------------------------------------------------ */
+.search-field {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+}
+
+.search-field svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.search-field input {
+  padding-left: 32px;
+  width: 100%;
+}
+
+/* ------------------------------------------------------------
+   33. Upload Drop Zone
+   ------------------------------------------------------------ */
+.upload-drop {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface-2);
+  transition: border-color var(--t) var(--ease), background-color var(--t) var(--ease);
+  min-height: 48px;
+}
+
+.upload-drop:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.upload-drop svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.upload-drop input[type="file"] {
+  font-size: var(--fs-caption);
+  min-width: 0;
+  flex: 1;
+}
+
+.upload-drop.has-file {
+  border-style: solid;
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+}
+
+/* ------------------------------------------------------------
+   34. Responsive adjustments for Property Detail
+   ------------------------------------------------------------ */
+@media (max-width: 768px) {
+  .detail-price {
+    font-size: 26px;
+  }
+  
+  .detail-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .detail-price {
+    width: 100%;
+    text-align: right;
+  }
+  
+  .info-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 599px) {
+  .gallery-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .form-footer {
+    flex-direction: column-reverse;
+  }
+  
+  .form-footer .btn,
+  .form-footer a {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .image-gallery {
+    grid-template-columns: 1fr;
+  }
+  
+  .image-item {
+    display: flex;
+    align-items: center;
+  }
+  
+  .image-item img {
+    width: 100px;
+    height: 75px;
+    flex-shrink: 0;
+  }
+  
+  .image-item .image-actions {
+    opacity: 1;
+  }
 }

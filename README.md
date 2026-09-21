@@ -147,7 +147,7 @@ El token admin se inyecta **server-side** (el `.env` raíz se copia a `admin/.en
 python -m pytest tests/ -q
 ```
 
-155 tests: database (migraciones/índices/constraints/pgvector), search (filtros/precio/disponibilidad), RAG (ingestión/chunking/metadata/retrieval/citas/versioning), agent (intents/referencias/contexto), CRM, appointments (doble-reserva), security (prompt injection/SQL injection/path traversal), API y E2E del flujo completo.
+270 tests: database (migraciones/índices/constraints/pgvector), search (filtros/precio/disponibilidad), RAG (ingestión/chunking/metadata/retrieval/citas/versioning), agent (intents/referencias/contexto), LLM orchestrator, CRM, appointments (doble-reserva), security (prompt injection/SQL injection/path traversal), API, E2E, Telegram, websearch, retry, fake LLM v2, partial failure, agent loop.
 
 Los tests usan una base de datos aislada (`inmobiliaria_test`), embeddings locales y nunca llaman a NVIDIA ni a Telegram.
 

@@ -91,6 +91,8 @@ async def update_lead(session: AsyncSession, lead_id: uuid_mod.UUID, data: dict)
         lead.name = str(data["name"])[:160]
     if data.get("phone") is not None:
         lead.phone = str(data["phone"])[:40]
+    if data.get("email") is not None:
+        lead.email = str(data["email"])[:160]
     if data.get("budget") is not None:
         lead.budget = float(data["budget"])
     if data.get("notes") is not None:
@@ -123,7 +125,7 @@ async def set_lead_status_from_appointment(session: AsyncSession, lead_id: uuid_
 
 
 async def get_customer_profile(session: AsyncSession, user_id: int) -> dict:
-    from app.database.models import Appointment, AppointmentStatus
+    from app.database.models import Appointment
     lead = await get_or_create_lead(session, user_id)
     appts = (await session.execute(
         select(Appointment).where(Appointment.lead_id == lead.id)
@@ -133,6 +135,7 @@ async def get_customer_profile(session: AsyncSession, user_id: int) -> dict:
         "lead_id": str(lead.id),
         "name": lead.name,
         "phone": lead.phone,
+        "email": lead.email,
         "status": lead.status.value,
         "budget": float(lead.budget) if lead.budget else None,
         "notes": lead.notes,

@@ -77,7 +77,7 @@ TOOL_SPECS: list[dict] = [
             "Registra tu interpretación estructurada del mensaje del usuario: intención, "
             "operación, tipo de inmueble, zona, presupuesto y campos faltantes. "
             "Úsala SIEMPRE que detectes o cambies criterios de búsqueda, selecciones una "
-            "propiedad, cambies de fase o te presentes explícitamente como Expresedi. "
+            "propiedad, cambies de fase o te presentes explícitamente como epresedi. "
             "Para `agent_introduced`, usa true únicamente si la respuesta que vas a enviar "
             "contiene realmente esa presentación. El backend valida cada campo; los rechazos "
             "llegan en la respuesta."
@@ -102,7 +102,7 @@ TOOL_SPECS: list[dict] = [
             "notes": {"type": "string", "description": "Nota breve de contexto (máx. 300 caracteres)"},
             "agent_introduced": {
                 "type": "boolean",
-                "description": "Usa true únicamente cuando tu respuesta actual se presenta explícitamente como Expresedi. Una vez verdadero, no lo vuelvas a poner en false."
+                "description": "Usa true únicamente cuando tu respuesta actual se presenta explícitamente como epresedi. Una vez verdadero, no lo vuelvas a poner en false."
             },
         }},
     }},
@@ -154,8 +154,8 @@ TOOL_SPECS: list[dict] = [
         "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "property_id": {"type": "string"}}},
     }},
     {"type": "function", "function": {
-        "name": "get_property_images", "description": "Lista imágenes locales de una propiedad.",
-        "parameters": {"type": "object", "properties": {"property_id": {"type": "string"}}},
+        "name": "get_property_images", "description": "Lista imágenes locales de una propiedad. Usa 'limit' para controlar cuántas imágenes devolver (ej. 1 para 'una imagen', 3 para 'tres fotos').",
+        "parameters": {"type": "object", "properties": {"property_id": {"type": "string"}, "limit": {"type": "integer", "description": "Máximo número de imágenes a devolver (opcional, default: todas)"}}},
     }},
     {"type": "function", "function": {
         "name": "save_property", "description": "Guarda en favoritos.",

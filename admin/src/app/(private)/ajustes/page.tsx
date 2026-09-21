@@ -6,7 +6,7 @@ import { RefreshButton } from "@/components/RefreshButton";
 import { Icon } from "@/components/icons";
 import { SectionHeader } from "@/components/SectionHeader";
 import { Select } from "@/components/ui/Select";
-import { SettingsForm } from "./SettingsForm";
+import { SettingsPageContent } from "./SettingsPageContent";
 import { buildHref, singleParam } from "@/lib/params";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ interface PageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-export default async function Configuracion({ searchParams }: PageProps) {
+export default async function Ajustes({ searchParams }: PageProps) {
   const sp = await searchParams;
   const q = (sp.q as string)?.trim() || "";
   const categoria = (sp.categoria as string)?.trim() || "";
@@ -64,7 +64,7 @@ export default async function Configuracion({ searchParams }: PageProps) {
         <div className="card-head">
           <div className="toolbar">
             <div className="toolbar-filters">
-              <form method="get" action="/configuracion" role="search" className="search-form">
+              <form method="get" action="/ajustes" role="search" className="search-form">
                 <span className="search-field">
                   <Icon name="search" size={14} />
                   <input
@@ -82,7 +82,7 @@ export default async function Configuracion({ searchParams }: PageProps) {
                 name="categoria"
                 value={categoria}
                 onChange={(e) => {
-                  window.location.href = buildHref("/configuracion", baseParams, { categoria: e.target.value });
+                  window.location.href = buildHref("/ajustes", baseParams, { categoria: e.target.value });
                 }}
                 options={[
                   { value: "", label: "Todas las categorías" },
@@ -145,7 +145,7 @@ export default async function Configuracion({ searchParams }: PageProps) {
 
       <section className="card section-gap" aria-label="Actualizar ajustes">
         <SectionHeader title="Actualizar ajustes" sub="Modifica uno o varios ajustes. Solo claves conocidas y editables." />
-        <SettingsForm />
+        <SettingsPageContent basePath="/ajustes" />
       </section>
     </>
   );

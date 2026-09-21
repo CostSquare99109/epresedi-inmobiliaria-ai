@@ -56,9 +56,9 @@ os.environ["ADMIN_TOKEN"] = "test-admin-token"
 os.environ["RATE_LIMIT_PER_MINUTE"] = "100000"
 os.environ["LOG_LEVEL"] = "WARNING"
 
-from app.ai.embeddings import LocalHashEmbedding, set_embedding_provider  # noqa: E402
-from app.core.settings import get_settings  # noqa: E402
-from app.database.base import AsyncSessionLocal  # noqa: E402
+from app.ai.embeddings import LocalHashEmbedding, set_embedding_provider
+from app.core.settings import get_settings
+from app.database.base import AsyncSessionLocal
 
 set_embedding_provider(LocalHashEmbedding(int(_env_file_value("EMBEDDING_DIM") or 256)))
 
@@ -94,9 +94,16 @@ def _run_migrations() -> None:
     command.upgrade(cfg, "head")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def prepared_db():
-    """Creates + migrates + seeds the test database exactly once per session."""
+    """Creates + migrates + seeds the test database exactly once per session.
+
+    Autouse: cada proceso pytest (incluidos los tests que abren
+    ``AsyncSessionLocal`` directamente, como los E2E) arranca sobre una BD de
+    tests recién sembrada y limpia. Sin esto, los tests quedan a merced del
+    estado residual de la BD compartida (por ejemplo, chunks RAG huérfanos que
+    otros tests dejaron commiteados) y el resultado depende del orden.
+    """
     _ensure_database()
     _run_migrations()
     from scripts.seed import seed
@@ -155,7 +162,7 @@ def admin_users():
     """RBAC test users keyed by role value (created by prepared_db)."""
     from sqlalchemy import select
 
-    from app.database.models import AdminRole, AdminUser
+    from app.database.models import AdminUser
 
     async def _load() -> dict[str, AdminUser]:
         async with AsyncSessionLocal() as s:
@@ -185,19 +192,16 @@ def user_id() -> int:
 
 
 @pytest.fixture
-def orchestrator():
-    from app.agents.orchestrator import Orchestrator
-
-    return Orchestrator(llm=None)
-
-
-@pytest.fixture
 def ask():
     """Sends a natural-language message through the agent and returns the reply."""
     from app.agents.orchestrator import Orchestrator
+    from tests.test_fake_llm_v2 import FakeLLMV2, search_then_send
 
     async def _ask(text: str, user_id: int = 1_000_000_777, **kw):
-        orch = kw.pop("orchestrator", None) or Orchestrator(llm=None)
+        orch = kw.pop("orchestrator", None)
+        if orch is None:
+            fake = FakeLLMV2(search_then_send("Respuesta de prueba del agente."))
+            orch = Orchestrator(llm=fake)
         async with AsyncSessionLocal() as s:
             return await orch.handle_user_message(s, user_id, text, "tester", "Test")
 

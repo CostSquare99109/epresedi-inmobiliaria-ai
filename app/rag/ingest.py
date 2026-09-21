@@ -189,7 +189,7 @@ async def process_document(session: AsyncSession, document_id: uuid_mod.UUID) ->
         doc.error = ""
         doc.chunk_count = len(chunks)
         doc.embedding_version = embedding_version()
-        doc.processed_at = dt.datetime.now(dt.timezone.utc)
+        doc.processed_at = dt.datetime.now(dt.UTC)
         await session.flush()
         log.info("rag_process doc=%s chunks=%s version=%s", doc.id, len(chunks), doc.version)
     except Exception as e:

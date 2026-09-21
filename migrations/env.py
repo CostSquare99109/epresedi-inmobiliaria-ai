@@ -7,8 +7,8 @@ from sqlalchemy import engine_from_config, pool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.settings import get_settings  # noqa: E402
-from app.database.models import Base  # noqa: E402
+from app.core.settings import get_settings
+from app.database.models import Base
 
 config = context.config
 

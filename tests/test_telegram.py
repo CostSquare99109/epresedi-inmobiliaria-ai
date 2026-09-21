@@ -200,8 +200,68 @@ async def test_on_text_appointment_flow_sends_valid_keyboard(user_id):
     """'Bueno quiero agendar una cita para verla en persona' → valid book_slot keyboard."""
     from app.agents.orchestrator import Orchestrator
     from app.bot import handlers
+    from tests.test_fake_llm_v2 import (
+        FakeLLMV2,
+        final_decision,
+        property_details_decision,
+        search_decision,
+        tc,
+        tool_round,
+    )
+    from tests.test_fake_llm_v2 import LLMDecisionBuilder as FakeLLMDecisionBuilder
 
-    handlers.register_orchestrator(Orchestrator(llm=None))
+    # Real UUID for PROP-0001 from seed data
+    PROP_0001_UUID = "a5b11831-f0cc-4cd6-96d7-7cb0fc9f1f02"
+
+    # Turn 3: Custom decision with keyboard showing book_slot buttons
+    def appointment_with_keyboard_decision() -> FakeLLMDecisionBuilder:
+        return FakeLLMDecisionBuilder(
+            intent="SCHEDULE_VISIT",
+            response_text="Tengo estos horarios disponibles:\n📅 Lunes 21 Sep 09:00\n📅 Lunes 21 Sep 10:00",
+            conversation={
+                "current_goal": "schedule_visit_select_datetime",
+                "missing_fields": ["datetime"],
+                "next_action": "present_results",
+                "phase": "APPOINTMENT_SELECTION",
+                "clarification_question": None,
+                "retry_context": None,
+            },
+            actions=[{
+                "type": "show_keyboard",
+                "keyboard": [
+                    {"text": "📅 Lunes 21 Sep 09:00", "action": "book_slot", "payload": {"property_id": PROP_0001_UUID, "datetime_iso": "2026-09-21T14:00", "label": "Mon 21 Sep 09:00"}},
+                    {"text": "📅 Lunes 21 Sep 10:00", "action": "book_slot", "payload": {"property_id": PROP_0001_UUID, "datetime_iso": "2026-09-21T15:00", "label": "Mon 21 Sep 10:00"}},
+                ],
+                "text": None,
+                "images": []
+            }],
+            state_updates={"intent": "SCHEDULE_VISIT", "phase": "APPOINTMENT_SELECTION", "selected_property_id": PROP_0001_UUID},
+        )
+
+    # Create a fake LLM that returns appropriate decisions for each turn
+    fake = FakeLLMV2([
+        # Turn 1: Tool calls to set state and search
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "casa",
+                "city": "Carepa", "budget_max": 300_000_000, "bedrooms": 3,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "casa", "city": "Carepa", "max_price": 300_000_000},
+                "semantic_query": "3 habitaciones",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré opciones en Carepa.", phase="PROPERTY_SELECTION", property_code="PROP-0001")),
+        # Turn 2: User selects "la primera" - get_property
+        tool_round(tc("get_property", {"property_ref": "la primera"}, call_id="c3")),
+        final_decision(property_details_decision("Aquí está la ficha de PROP-0001.", property_id=PROP_0001_UUID, property_code="PROP-0001")),
+        # Turn 3: Wants to schedule visit - list_available_slots
+        tool_round(tc("list_available_slots", {"property_id": PROP_0001_UUID}, call_id="c4")),
+        final_decision(appointment_with_keyboard_decision()),
+    ])
+    orch = Orchestrator(llm=fake)
+    handlers.register_orchestrator(orch)
+    
     update = _fake_update(user_id=user_id, text="busca casas en Carepa hasta 300 millones")
     await handlers.on_text(update, MagicMock())
     update = _fake_update(user_id=user_id, text="la primera")
@@ -251,8 +311,24 @@ async def test_on_text_end_to_end_mocked(user_id):
     """User message → orchestrator → reply sent through reply_text."""
     from app.agents.orchestrator import Orchestrator
     from app.bot import handlers
+    from tests.test_fake_llm_v2 import FakeLLMV2, final_decision, search_decision, tc, tool_round
 
-    handlers.register_orchestrator(Orchestrator(llm=None))
+    fake = FakeLLMV2([
+        # Tool calls to set state and search
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "casa",
+                "city": "Carepa", "budget_max": 300_000_000, "bedrooms": 3,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "casa", "city": "Carepa", "max_price": 300_000_000},
+                "semantic_query": "3 habitaciones",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré opciones en Carepa.", phase="PROPERTY_SELECTION", property_code="PROP-0001")),
+    ])
+    orch = Orchestrator(llm=fake)
+    handlers.register_orchestrator(orch)
     update = _fake_update(user_id=user_id, text="busca casas en Carepa hasta 300 millones")
     await handlers.on_text(update, MagicMock())
     update.effective_message.reply_text.assert_awaited()
@@ -264,25 +340,29 @@ async def test_on_text_end_to_end_mocked(user_id):
 async def test_on_callback_mocked(user_id):
     from app.agents.orchestrator import Orchestrator
     from app.bot import handlers
+    from tests.test_fake_llm_v2 import FakeLLMV2, final_decision, property_details_decision
 
-    handlers.register_orchestrator(Orchestrator(llm=None))
+    fake = FakeLLMV2([
+        final_decision(property_details_decision("Aquí está la ficha.", property_id="test-uuid", property_code="PROP-0001")),
+    ])
+    orch = Orchestrator(llm=fake)
+    handlers.register_orchestrator(orch)
     update = _fake_update(user_id=user_id, text="")
-    update.callback_query = MagicMock()
+    update.callback_query = AsyncMock()
     update.callback_query.answer = AsyncMock()
-    update.callback_query.data = "details:nonexistent-uuid"
-    update.callback_query.message = MagicMock()
-    update.callback_query.message.reply_text = AsyncMock()
-    update.effective_message = update.callback_query.message
+    update.callback_query.data = "details:test-uuid"
+    update.callback_query.edit_message_text = AsyncMock()
+    update.effective_message = update.callback_query
     await handlers.on_callback(update, MagicMock())
     update.callback_query.answer.assert_awaited()
-    update.callback_query.message.reply_text.assert_awaited()
+    update.callback_query.edit_message_text.assert_awaited()
 
 
 async def test_rate_limit_blocks_flood(user_id):
-    from app.security.ratelimit import RateLimited, check_rate_limit
-
     import redis.asyncio as aioredis
+
     from app.core.settings import get_settings
+    from app.security.ratelimit import RateLimited, check_rate_limit
 
     key = f"test:flood:{user_id}"
     client = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
@@ -297,3 +377,350 @@ async def test_rate_limit_blocks_flood(user_id):
         for k in await client.keys(f"rl:{key}:*"):
             await client.delete(k)
         await client.aclose()
+
+
+# ---------------------------------------------------------------- /nuevo command
+async def test_cmd_nuevo_creates_new_conversation(session, user_id):
+    """Test that /nuevo creates a new conversation with empty state."""
+    from app.agents.orchestrator import Orchestrator
+    from app.bot import handlers
+    from app.memory import service as memory_service
+    from tests.test_fake_llm_v2 import (
+        FakeLLMV2,
+        final_decision,
+        property_details_decision,
+        search_decision,
+        tc,
+        tool_round,
+    )
+
+    fake = FakeLLMV2([
+        # Turn 1: Tool calls to set state and search
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "casa",
+                "city": "Carepa", "budget_max": 300_000_000, "bedrooms": 3,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "casa", "city": "Carepa", "max_price": 300_000_000},
+                "semantic_query": "3 habitaciones",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré opciones en Carepa.", phase="PROPERTY_SELECTION", property_code="PROP-0001")),
+        # Turn 2: User selects "la primera" - get_property
+        tool_round(tc("get_property", {"property_ref": "la primera"}, call_id="c3")),
+        final_decision(property_details_decision("Aquí está la ficha de PROP-0001.", property_id="test-uuid", property_code="PROP-0001")),
+    ])
+    orch = Orchestrator(llm=fake)
+    handlers.register_orchestrator(orch)
+
+    # First, create some conversation history
+    update1 = _fake_update(user_id=user_id, text="busca casas en Carepa hasta 300 millones")
+    await handlers.on_text(update1, MagicMock())
+
+    update2 = _fake_update(user_id=user_id, text="la primera")
+    await handlers.on_text(update2, MagicMock())
+
+    # Verify conversation has state
+    async with AsyncSessionLocal() as s:
+        user = await memory_service.get_or_create_user(s, user_id)
+        conv = await memory_service.get_or_create_conversation(s, user.id)
+        assert conv.state.get("last_results") is not None
+        old_conv_id = conv.id
+
+    # Now send /nuevo
+    update3 = _fake_update(user_id=user_id, text="/nuevo")
+    update3.message.text = "/nuevo"
+    await handlers.cmd_nuevo(update3, MagicMock())
+
+    # Verify response
+    update3.effective_message.reply_text.assert_awaited()
+    sent = update3.effective_message.reply_text.await_args.kwargs.get("text") or \
+        update3.effective_message.reply_text.await_args.args[0]
+    assert "Nuevo chat iniciado" in sent
+
+    # Verify new conversation was created with empty state
+    async with AsyncSessionLocal() as s:
+        user = await memory_service.get_or_create_user(s, user_id)
+        new_conv = await memory_service.get_or_create_conversation(s, user.id)
+        assert new_conv.id != old_conv_id  # New conversation
+        assert new_conv.state == {}  # Empty state
+        assert new_conv.summary == ""  # Empty summary
+
+
+async def test_cmd_nuevo_preserves_user_data(session, user_id):
+    """Test that /nuevo preserves user preferences, favorites, and appointments."""
+    from app.agents.orchestrator import Orchestrator
+    from app.bot import handlers
+    from app.crm import service as crm_service
+    from app.memory import service as memory_service
+    from app.properties import repository as prop_repo
+    from tests.test_fake_llm_v2 import FakeLLMV2, final_decision, search_decision, tc, tool_round
+
+    fake = FakeLLMV2([
+        # Tool calls to set state and search
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "casa",
+                "city": "Carepa", "budget_max": 300_000_000, "bedrooms": 3,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "casa", "city": "Carepa", "max_price": 300_000_000},
+                "semantic_query": "3 habitaciones",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré opciones en Carepa.", phase="PROPERTY_SELECTION", property_code="PROP-0001")),
+    ])
+    orch = Orchestrator(llm=fake)
+    handlers.register_orchestrator(orch)
+
+    # Create user and some persistent data
+    async with AsyncSessionLocal() as s:
+        user = await memory_service.get_or_create_user(s, user_id, "tester", "Test")
+        # Set preferences
+        await memory_service.update_preferences(s, user.id, {
+            "city": "Carepa",
+            "property_type": "casa",
+            "max_price": 300_000_000,
+        })
+        # Add a favorite using a real property from seed data
+        prop = await prop_repo.get_property_by_code(s, "PROP-0001")
+        await crm_service.add_favorite(s, user.id, prop.id)
+        await s.commit()
+
+    # Send /nuevo
+    update = _fake_update(user_id=user_id, text="/nuevo")
+    update.message.text = "/nuevo"
+    await handlers.cmd_nuevo(update, MagicMock())
+
+    # Verify persistent data still exists
+    async with AsyncSessionLocal() as s:
+        user = await memory_service.get_or_create_user(s, user_id)
+        prefs = await memory_service.get_preferences(s, user.id)
+        assert prefs is not None
+        assert prefs.city == "Carepa"
+        assert prefs.property_type == "casa"
+        assert float(prefs.max_budget) == 300_000_000
+
+        favorites = await crm_service.list_favorites(s, user.id)
+        assert len(favorites) == 1
+
+
+async def test_cmd_nuevo_clears_conversation_state(session, user_id):
+    """Test that /nuevo clears the current conversation state."""
+    from app.agents.orchestrator import Orchestrator
+    from app.bot import handlers
+    from app.memory import service as memory_service
+    from app.properties import repository as prop_repo
+    from tests.test_fake_llm_v2 import (
+        FakeLLMV2,
+        final_decision,
+        property_details_decision,
+        search_decision,
+        tc,
+        tool_round,
+    )
+
+    # Get real UUID for PROP-0001
+    prop = await prop_repo.get_property_by_code(session, "PROP-0001")
+    PROP_0001_UUID = str(prop.id)
+
+    fake = FakeLLMV2([
+        # Turn 1: Tool calls to set state and search
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "casa",
+                "city": "Carepa", "budget_max": 300_000_000, "bedrooms": 3,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "casa", "city": "Carepa", "max_price": 300_000_000},
+                "semantic_query": "3 habitaciones",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré opciones en Carepa.", phase="PROPERTY_SELECTION", property_code="PROP-0001")),
+        # Turn 2: User selects "la primera" - get_property
+        tool_round(tc("get_property", {"property_ref": "la primera"}, call_id="c3")),
+        final_decision(property_details_decision("Aquí está la ficha de PROP-0001.", property_id=PROP_0001_UUID, property_code="PROP-0001")),
+    ])
+    orch = Orchestrator(llm=fake)
+    handlers.register_orchestrator(orch)
+
+    # Create conversation with various state
+    update1 = _fake_update(user_id=user_id, text="busca casas en Carepa hasta 300 millones")
+    await handlers.on_text(update1, MagicMock())
+
+    update2 = _fake_update(user_id=user_id, text="la primera")
+    await handlers.on_text(update2, MagicMock())
+
+    # Verify state has search results and property selection
+    async with AsyncSessionLocal() as s:
+        user = await memory_service.get_or_create_user(s, user_id)
+        conv = await memory_service.get_or_create_conversation(s, user.id)
+        assert conv.state.get("last_results") is not None
+        assert conv.state.get("last_property_id") is not None
+
+    # Send /nuevo
+    update3 = _fake_update(user_id=user_id, text="/nuevo")
+    update3.message.text = "/nuevo"
+    await handlers.cmd_nuevo(update3, MagicMock())
+
+    # Verify new conversation has clean state
+    async with AsyncSessionLocal() as s:
+        user = await memory_service.get_or_create_user(s, user_id)
+        new_conv = await memory_service.get_or_create_conversation(s, user.id)
+        assert new_conv.state == {}
+        assert new_conv.summary == ""
+
+
+async def test_cmd_nuevo_isolated_per_user(session):
+    """Test that /nuevo by user A doesn't affect user B."""
+    from app.agents.orchestrator import Orchestrator
+    from app.bot import handlers
+    from app.memory import service as memory_service
+    from tests.test_fake_llm_v2 import FakeLLMV2, final_decision, search_decision, tc, tool_round
+
+    # Create separate orchestrators for each user with their own fake LLMs
+    fake_a = FakeLLMV2([
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "casa",
+                "city": "Carepa", "budget_max": 300_000_000, "bedrooms": 3,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "casa", "city": "Carepa", "max_price": 300_000_000},
+                "semantic_query": "3 habitaciones",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré opciones en Carepa.", phase="PROPERTY_SELECTION", property_code="PROP-0001")),
+    ])
+    orch_a = Orchestrator(llm=fake_a)
+
+    fake_b = FakeLLMV2([
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "apartamento",
+                "city": "Medellín", "budget_max": 500_000_000, "bedrooms": 2,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "apartamento", "city": "Medellín", "max_price": 500_000_000},
+                "semantic_query": "2 habitaciones",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré opciones en Medellín.", phase="PROPERTY_SELECTION", property_code="PROP-0002")),
+    ])
+    orch_b = Orchestrator(llm=fake_b)
+
+    # Register orchestrator for user A first
+    handlers.register_orchestrator(orch_a)
+
+    user_a = 2_000_000_001
+    user_b = 2_000_000_002
+
+    # User A creates conversation with state
+    update_a = _fake_update(user_id=user_a, text="busca casas en Carepa")
+    await handlers.on_text(update_a, MagicMock())
+
+    # Switch to orchestrator for user B
+    handlers.register_orchestrator(orch_b)
+
+    # User B creates conversation with state
+    update_b = _fake_update(user_id=user_b, text="busca apartamentos en Medellín")
+    await handlers.on_text(update_b, MagicMock())
+
+    # Switch back to orchestrator for user A
+    handlers.register_orchestrator(orch_a)
+
+    # User A sends /nuevo
+    update_a_nuevo = _fake_update(user_id=user_a, text="/nuevo")
+    update_a_nuevo.message.text = "/nuevo"
+    await handlers.cmd_nuevo(update_a_nuevo, MagicMock())
+
+    # Verify user B's conversation is unaffected
+    async with AsyncSessionLocal() as s:
+        user_b_obj = await memory_service.get_or_create_user(s, user_b)
+        conv_b = await memory_service.get_or_create_conversation(s, user_b_obj.id)
+        assert conv_b.state.get("last_results") is not None
+
+    # Verify user A has new empty conversation
+    async with AsyncSessionLocal() as s:
+        user_a_obj = await memory_service.get_or_create_user(s, user_a)
+        conv_a = await memory_service.get_or_create_conversation(s, user_a_obj.id)
+        assert conv_a.state == {}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Progress cleanup regression tests
+# ════════════════════════════════════════════════════════════════════════════════
+
+async def test_progress_cleanup_on_llm_error(session, user_id):
+    """Cuando el LLM falla, el mensaje de progreso debe limpiarse (no duplicados)."""
+    from app.bot.handlers import _run_orchestrator
+    from app.bot.progress import TelegramProgressRenderer, ProgressConfig
+    from app.agents.orchestrator import Orchestrator
+    from app.ai.llm import LLMError
+    from tests.test_fake_llm_v2 import FakeLLMV2
+
+    # Mock bot to capture messages
+    class MockBot:
+        def __init__(self):
+            self.sent_messages = []
+            self.edited_messages = []
+            self.deleted_messages = []
+
+        async def send_message(self, chat_id, text, disable_notification=False):
+            self.sent_messages.append({"chat_id": chat_id, "text": text})
+            class Msg:
+                message_id = len(self.sent_messages)
+            return Msg()
+
+        async def edit_message_text(self, chat_id, message_id, text):
+            self.edited_messages.append({"chat_id": chat_id, "message_id": message_id, "text": text})
+
+        async def delete_message(self, chat_id, message_id):
+            self.deleted_messages.append({"chat_id": chat_id, "message_id": message_id})
+
+    # Create orchestrator with failing LLM
+    fake = FakeLLMV2([LLMError("model_not_found", "model not found")])
+    orch = Orchestrator(llm=fake)
+    from app.bot.handlers import register_orchestrator
+    register_orchestrator(orch)
+
+    # Create fake update with proper async mocks
+    from unittest.mock import AsyncMock, MagicMock
+
+    bot = MockBot()
+    update = MagicMock()
+    
+    # effective_message is what _reply_with uses
+    effective_message = MagicMock()
+    effective_message.reply_text = AsyncMock()
+    update.effective_message = effective_message
+    update.message = effective_message  # also set message for compatibility
+    update.message.text = "Hola"
+    
+    update.effective_user = MagicMock()
+    update.effective_user.id = user_id
+    update.effective_user.username = "testuser"
+    update.effective_user.first_name = "Test"
+    update.effective_chat = MagicMock()
+    update.effective_chat.id = 12345
+    update.get_bot = MagicMock(return_value=bot)
+
+    # Run handler
+    await _run_orchestrator(update, "Hola")
+
+    # Verificar: se envió mensaje inicial de progreso
+    assert len(bot.sent_messages) == 1
+    assert "Iniciando" in bot.sent_messages[0]["text"]
+
+    # Verificar: se editó el mensaje a estado de error
+    assert len(bot.edited_messages) == 1
+    assert "problema" in bot.edited_messages[0]["text"].lower()
+
+    # Verificar: se ELIMINÓ el mensaje de progreso (cleanup en finally)
+    assert len(bot.deleted_messages) == 1
+
+    # Verificar: NO hay mensaje de error duplicado enviado como nuevo mensaje
+    # (solo el mensaje inicial + 1 respuesta final = 2 mensajes totales enviados)
+    # El mensaje de progreso se borra, así que el usuario ve solo 1 mensaje final
+    assert len(bot.deleted_messages) == 1  # cleanup ocurrió

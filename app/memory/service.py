@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import uuid as uuid_mod
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ async def get_or_create_user(
             update(AppUser).where(AppUser.id == user.id).values(
                 username=username or user.username,
                 first_name=first_name or user.first_name,
-                last_seen_at=datetime.now(timezone.utc),
+                last_seen_at=datetime.now(UTC),
             )
         )
         await session.refresh(user)
@@ -55,6 +55,18 @@ async def get_or_create_conversation(session: AsyncSession, user_id: int) -> Con
         conv = Conversation(user_id=user_id, state={}, summary="")
         session.add(conv)
         await session.flush()
+    return conv
+
+
+async def create_new_conversation(session: AsyncSession, user_id: int) -> Conversation:
+    """Create a new conversation for the user, archiving the previous one.
+    
+    The previous conversation remains in the database for history/audit.
+    The new conversation starts with empty state and summary.
+    """
+    conv = Conversation(user_id=user_id, state={}, summary="")
+    session.add(conv)
+    await session.flush()
     return conv
 
 

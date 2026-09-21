@@ -30,6 +30,10 @@ ACTION_LABELS = {
     "cancel_appt": "✖️ Cancelar cita",
     "save_search": "🔔 Crear alerta",
     "share_contact": None,
+    "ver_mas_dias": "➡️ Ver más días",
+    "confirm_booking": "✅ Sí, confirmar",
+    "cancel_booking": "❌ No, cancelar",
+    "list_saved": "🔔 Mis alertas",
 }
 
 
@@ -67,6 +71,14 @@ def _book_slot_callback(payload: dict) -> str:
     return f"book_slot:{ref}:{when}"
 
 
+def _ver_mas_dias_callback(payload: dict) -> str:
+    """Compact callback for 'Ver más días': ver_mas_dias:{property_id}."""
+    ref = str(payload.get("property_id") or "")
+    if not ref:
+        return ""
+    return f"ver_mas_dias:{ref}"
+
+
 def _resolve_button(action: str, payload) -> tuple[str | None, str]:
     """Maps (action, payload) to (label, callback_data); label None → drop."""
     if action == "book_slot":
@@ -74,19 +86,37 @@ def _resolve_button(action: str, payload) -> tuple[str | None, str]:
             label = payload.get("label") or str(payload.get("datetime_iso") or "")[:16]
             return f"📅 {label}", _book_slot_callback(payload)
         return f"📅 {payload}", _cb(action, payload)
+    if action == "confirm_booking" and isinstance(payload, dict):
+        # Callback compacto: la agenda se re-resuelve server-side con el
+        # contexto conversacional (los datos de contacto están en el historial).
+        ref = str(payload.get("property_id") or "")
+        when = str(payload.get("datetime_iso") or "")[:16]
+        if ref and when:
+            return ACTION_LABELS[action], f"confirm_booking:{ref}:{when}"
+        return ACTION_LABELS[action], _cb(action, payload)
+    if action == "cancel_booking" and isinstance(payload, dict):
+        ref = str(payload.get("property_id") or "")
+        if ref:
+            return ACTION_LABELS[action], f"cancel_booking:{ref}"
+        return ACTION_LABELS[action], _cb(action, payload)
     if action == "cancel_appt":
         return ACTION_LABELS[action], _cb(action, payload)
+    if action == "ver_mas_dias":
+        return ACTION_LABELS[action], _ver_mas_dias_callback(payload)
     label = ACTION_LABELS.get(action)
     if label is None:
         return None, ""
     return label, _cb(action, payload)
 
 
-def build_keyboard(actions: list[tuple]) -> InlineKeyboardMarkup | None:
+def build_keyboard(actions: list[tuple] | None) -> InlineKeyboardMarkup | None:
     """Maps orchestrator actions to inline keyboard rows (max 2 per row).
 
     Buttons whose callback_data violates the Telegram 64-byte limit are
-    dropped with a warning so the Bot API never receives invalid markup."""
+    dropped with a warning so the Bot API never receives invalid markup.
+    Handles None by treating as empty list (no keyboard)."""
+    if not actions:
+        return None
     rows: list[list[InlineKeyboardButton]] = []
     current: list[InlineKeyboardButton] = []
     for action, payload in actions:
@@ -123,4 +153,11 @@ def parse_callback(data: str) -> tuple[str, object]:
     if action == "book_slot" and raw:
         ref, _, when = raw.partition(":")
         return action, {"property_id": ref, "datetime_iso": when}
+    if action == "confirm_booking" and raw:
+        ref, _, when = raw.partition(":")
+        return action, {"property_id": ref, "datetime_iso": when}
+    if action == "cancel_booking" and raw:
+        return action, {"property_id": raw}
+    if action == "ver_mas_dias" and raw:
+        return action, {"property_id": raw}
     return action, raw

@@ -23,6 +23,7 @@ export function CitaCreate() {
   const [slots, setSlots] = useState<any[]>([]);
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>("");
   const [selectedLeadId, setSelectedLeadId] = useState<string>("");
+  const [selectingSlot, setSelectingSlot] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     property_id: "",
@@ -81,6 +82,13 @@ export function CitaCreate() {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSlotSelect = (datetime: string) => {
+    setSelectingSlot(datetime);
+    setFormData(prev => ({ ...prev, scheduled_at: datetime }));
+    // Brief visual feedback for slot selection
+    setTimeout(() => setSelectingSlot(null), 150);
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -183,17 +191,27 @@ export function CitaCreate() {
             <div className="slots-container">
               {slots.length > 0 ? (
                 <div className="slots-grid" role="group" aria-label="Horarios disponibles">
-                  {slots.map((slot: any) => (
-                    <button
-                      key={slot.datetime}
-                      type="button"
-                      className={`slot-btn ${formData.scheduled_at === slot.datetime ? "selected" : ""}`}
-                      onClick={() => setFormData(prev => ({ ...prev, scheduled_at: slot.datetime }))}
-                      aria-pressed={formData.scheduled_at === slot.datetime}
-                    >
-                      {new Date(slot.datetime).toLocaleString()}
-                    </button>
-                  ))}
+                  {slots.map((slot: any) => {
+                    const isSelected = formData.scheduled_at === slot.datetime;
+                    const isSelecting = selectingSlot === slot.datetime;
+                    return (
+                      <button
+                        key={slot.datetime}
+                        type="button"
+                        className={`slot-btn ${isSelected ? "selected" : ""} ${isSelecting ? "selecting" : ""}`}
+                        onClick={() => handleSlotSelect(slot.datetime)}
+                        aria-pressed={isSelected}
+                        disabled={isSelecting}
+                      >
+                        {isSelecting && (
+                          <span className="slot-spinner" aria-hidden="true">
+                            <Icon name="refresh" size={12} />
+                          </span>
+                        )}
+                        <span>{new Date(slot.datetime).toLocaleString()}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : selectedPropertyId && !loadingSlots ? (
                 <p className="no-slots">No hay horarios disponibles en los próximos 14 días. Selecciona otra propiedad o amplía el rango en el backend.</p>

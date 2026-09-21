@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, HTTPException, Request, status
 from jose import jwt
@@ -60,7 +58,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     s = get_settings()
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=s.JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=s.JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire, "type": "access"})
     return jwt.encode(to_encode, s.JWT_SECRET, algorithm=s.JWT_ALGORITHM)
 
@@ -68,7 +66,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 def create_refresh_token(data: dict) -> str:
     s = get_settings()
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(days=s.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+    expire = datetime.now(UTC) + timedelta(days=s.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, s.JWT_SECRET, algorithm=s.JWT_ALGORITHM)
 

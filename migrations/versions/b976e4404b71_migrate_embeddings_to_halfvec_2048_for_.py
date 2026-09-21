@@ -5,18 +5,16 @@ Revises: 8027eadf0d90
 Create Date: 2026-09-16 17:47:58.402225
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
-import sqlalchemy as sa
-import pgvector.sqlalchemy.vector
 import pgvector.sqlalchemy.halfvec
-
+import pgvector.sqlalchemy.vector
+from alembic import op
 
 revision: str = 'b976e4404b71'
-down_revision: Union[str, None] = '8027eadf0d90'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '8027eadf0d90'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import re
-import uuid as uuid_mod
 from pathlib import Path
 
 from app.core.settings import get_settings

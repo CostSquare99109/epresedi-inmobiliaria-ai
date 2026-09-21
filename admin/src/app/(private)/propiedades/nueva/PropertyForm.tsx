@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createProperty, uploadPropertyImage } from "../actions";
+import { createProperty, updateProperty, uploadPropertyImage } from "../actions";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -29,6 +29,8 @@ export function PropertyForm({ mode, initialData, propertyId }: PropertyFormProp
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [images, setImages] = useState<string[]>(initialData?.images || []);
   const [uploadingImage, setUploadingImage] = useState(false);
+
+  const isEditing = mode === "edit";
 
   const [formData, setFormData] = useState({
     title: initialData?.title || "",
@@ -84,10 +86,19 @@ export function PropertyForm({ mode, initialData, propertyId }: PropertyFormProp
     });
 
     try {
-      const result = await createProperty(submitData);
+      let result;
+      if (isEditing && propertyId) {
+        result = await updateProperty(propertyId, submitData);
+      } else {
+        result = await createProperty(submitData);
+      }
       if (result.ok) {
-        setFeedback({ tone: "ok", message: "Propiedad creada correctamente" });
-        setTimeout(() => router.push(`/propiedades/${result.property.id}`), 1500);
+        setFeedback({ tone: "ok", message: isEditing ? "Propiedad actualizada correctamente" : "Propiedad creada correctamente" });
+        if (!isEditing && result.property) {
+          setTimeout(() => router.push(`/propiedades/${result.property.id}`), 1500);
+        } else if (isEditing) {
+          router.refresh();
+        }
       } else {
         setFeedback({ tone: "error", message: result.error });
       }
@@ -174,8 +185,6 @@ export function PropertyForm({ mode, initialData, propertyId }: PropertyFormProp
       setFeedback({ tone: "error", message: "Error reordenando" });
     }
   };
-
-  const isEditing = mode === "edit";
 
   return (
     <div className="property-form-container">

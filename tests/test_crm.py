@@ -1,14 +1,10 @@
 """CRM: favorites, saved searches, leads, per-user isolation."""
 from __future__ import annotations
 
-import uuid as uuid_mod
-
-import pytest
 from sqlalchemy import select
 
 from app.crm import service as crm
-from app.database.base import AsyncSessionLocal
-from app.database.models import Favorite, Lead, LeadStatus, Property, SavedSearch
+from app.database.models import LeadStatus, Property
 from app.memory import service as memory_service
 
 

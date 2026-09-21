@@ -97,7 +97,7 @@ export async function createProperty(
     bathrooms: formData.get("bathrooms") ? parseInt(formData.get("bathrooms") as string, 10) : undefined,
     parking_spaces: formData.get("parking_spaces") ? parseInt(formData.get("parking_spaces") as string, 10) : undefined,
     features: formData.get("features") ? JSON.parse(formData.get("features") as string) : [],
-    description: formData.get("description") as string,
+    description: (formData.get("description") as string) || "",
     project_id: formData.get("project_id") as string || undefined,
     status: (formData.get("status") as string) || "AVAILABLE",
   };

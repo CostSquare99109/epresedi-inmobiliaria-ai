@@ -14,6 +14,7 @@ Presentación con **python-telegram-bot** (selección única de librería). Sin 
 | `/busquedas` | Alertas guardadas |
 | `/citas` | Visitas agendadas |
 | `/perfil` | Perfil y preferencias del usuario |
+| `/nuevo` | Iniciar una nueva conversación (limpia contexto) |
 
 El **lenguaje natural es el mecanismo principal** (`MessageHandler(TEXT & ~COMMAND)`).
 
@@ -56,6 +57,26 @@ Bot: Encontré 2 propiedades: 1. Casa A 2. Casa B
 Usuario: la segunda
 Bot: 🏠 Casa B cuesta… (ficha completa)
 ```
+
+## Progreso en tiempo real (editable message)
+
+Al recibir un mensaje del usuario, el bot envía un mensaje inicial «⏳ Iniciando…» y lo **edita progresivamente** durante la ejecución del agente:
+
+1. **Analizando** — `🧠 Analizando tu solicitud…`
+2. **Ejecutando tools** — `🔎 Buscando propiedades…`, `📋 Consultando ficha…`, `📅 Consultando horarios…`
+3. **Procesando resultados** — `✅ Búsqueda completada`, `✅ Ficha consultada`, `✅ Horarios consultados`
+4. **Componiendo respuesta** — `✍️ Preparando la respuesta…`
+5. **Final** — el mensaje de progreso se elimina y se envía la respuesta final limpia
+
+**Características:**
+- **Un solo mensaje editable**: no se envían múltiples mensajes de progreso.
+- **Throttling**: ediciones limitadas a 1 cada 1.5s (configurable) para respetar rate limits de Telegram.
+- **Sin chain-of-thought**: los estados son generados por la aplicación (eventos seguros), no el razonamiento privado del modelo.
+- **Tool-aware**: cada tool tiene su mensaje de inicio y finalización (ej. `🔎 Buscando propiedades…` → `✅ Búsqueda completada`).
+- **Robusto**: maneja `RetryAfter`, `message is not modified`, `message can't be edited`, `Forbidden`, timeouts.
+- **Aislado por chat**: cada conversación tiene su propio renderer y mensaje de progreso.
+
+Implementación: `app/bot/progress.py` (`TelegramProgressRenderer`, `ProgressState`, `ProgressConfig`).
 
 ## Rate limiting
 

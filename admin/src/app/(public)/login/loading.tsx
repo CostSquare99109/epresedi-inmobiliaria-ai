@@ -12,7 +12,7 @@ export default function LoginLoading() {
                 </svg>
               </span>
               <div className="login-brand-text">
-                <h1 className="login-title">EXPRESEDI</h1>
+                <h1 className="login-title">epresedi</h1>
                 <p className="login-subtitle">Inmobiliaria</p>
               </div>
             </div>

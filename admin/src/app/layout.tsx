@@ -3,8 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "EXPRESEDI Inmobiliaria",
-    template: "%s · EXPRESEDI Inmobiliaria",
+    default: "epresedi Inmobiliaria",
+    template: "%s · epresedi Inmobiliaria",
   },
   robots: { index: false, follow: false },
 };

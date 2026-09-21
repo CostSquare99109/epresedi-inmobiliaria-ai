@@ -66,7 +66,7 @@ async def dequeue(timeout: float = 2.0) -> dict | None:
     try:
         item = await asyncio.wait_for(_memory_queue.get(), timeout=timeout)
         return json.loads(item)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return None
 
 

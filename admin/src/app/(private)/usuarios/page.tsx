@@ -116,10 +116,10 @@ export default async function Usuarios({ searchParams }: PageProps) {
               <thead>
                 <tr>
                   <th>Usuario</th>
-                  <th>Email</th>
+                  <th className="table-responsive-hide-xs">Email</th>
                   <th>Rol</th>
                   <th>Estado</th>
-                  <th>Último acceso</th>
+                  <th className="table-responsive-hide-sm">Último acceso</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
@@ -130,7 +130,7 @@ export default async function Usuarios({ searchParams }: PageProps) {
                       <div className="cell-main">{u.name}</div>
                       <div className="cell-sub">ID: {u.id.slice(0, 8)}…</div>
                     </td>
-                    <td>{u.email}</td>
+                    <td className="table-responsive-hide-xs">{u.email}</td>
                     <td>
                       <span className={`status-badge status-${u.role === "superadmin" ? "success" : u.role === "admin" ? "warning" : u.role === "editor" ? "info" : "neutral"}`}>
                         {roleLabels[u.role] || u.role}
@@ -141,7 +141,7 @@ export default async function Usuarios({ searchParams }: PageProps) {
                         {u.is_active ? "Activo" : "Inactivo"}
                       </span>
                     </td>
-                    <td>
+                    <td className="table-responsive-hide-sm">
                       {u.last_login_at ? (
                         <>
                           <div className="cell-main">{new Date(u.last_login_at).toLocaleDateString()}</div>

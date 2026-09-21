@@ -3,15 +3,14 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from pgvector.sqlalchemy import Vector, HALFVEC
+from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import (
     BigInteger,
     Boolean,
     Computed,
     DateTime,
-    Enum as SAEnum,
     ForeignKey,
     Index,
     Integer,
@@ -21,12 +20,15 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import (
+    Enum as SAEnum,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def new_uuid() -> uuid.UUID:
@@ -247,7 +249,7 @@ class Project(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=utcnow
     )
 
-    properties: Mapped[list["Property"]] = relationship(back_populates="project")
+    properties: Mapped[list[Property]] = relationship(back_populates="project")
 
 
 class Property(Base):
@@ -318,6 +320,7 @@ class Property(Base):
             "id": str(self.id),
             "code": self.code,
             "title": self.title,
+            "description": self.description,
             "property_type": self.property_type.value,
             "operation": self.operation.value,
             "price": float(self.price) if self.price is not None else None,
@@ -368,7 +371,7 @@ class Document(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=utcnow
     )
 
-    chunks: Mapped[list["DocumentChunk"]] = relationship(
+    chunks: Mapped[list[DocumentChunk]] = relationship(
         back_populates="document", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -426,7 +429,7 @@ class AppUser(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    preference: Mapped["UserPreference | None"] = relationship(
+    preference: Mapped[UserPreference | None] = relationship(
         back_populates="user", uselist=False
     )
 
@@ -491,14 +494,14 @@ class AiEvent(Base):
     user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     intent: Mapped[str] = mapped_column(String(40), default="")
-    prompt_version: Mapped[str] = mapped_column(String(20), default="")
+    prompt_version: Mapped[str] = mapped_column(String(64), default="")
     model: Mapped[str] = mapped_column(String(120), default="")
     tool_calls: Mapped[list] = mapped_column(JSONB, default=list)
     retrieved_property_ids: Mapped[list] = mapped_column(JSONB, default=list)
     retrieved_chunk_ids: Mapped[list] = mapped_column(JSONB, default=list)
     response: Mapped[str] = mapped_column(Text, default="")
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(20), default="ok")
+    status: Mapped[str] = mapped_column(String(64), default="ok")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -539,6 +542,7 @@ class Lead(Base):
     )
     name: Mapped[str] = mapped_column(String(160), default="")
     phone: Mapped[str] = mapped_column(String(40), default="")
+    email: Mapped[str] = mapped_column(String(160), default="")
     status: Mapped[LeadStatus] = mapped_column(
         sa_enum(LeadStatus), default=LeadStatus.NEW, index=True
     )

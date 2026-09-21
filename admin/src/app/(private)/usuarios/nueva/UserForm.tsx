@@ -118,7 +118,7 @@ export function UserForm({ mode, initialData, userId }: UserFormProps) {
                 type="email"
                 value={formData.email}
                 onChange={handleChange}
-                placeholder="admin@expresedi.com"
+                placeholder="admin@epresedi.com"
                 required
                 maxLength={255}
               />

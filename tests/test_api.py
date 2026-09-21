@@ -113,7 +113,7 @@ async def test_document_upload_process_delete(client, admin_token):
     content = (
         f"Doc API de prueba {unique_id}.\n\n"
         f"El Proyecto API-Test cuenta con 55 apartamentos de prueba."
-    ).encode("utf-8")
+    ).encode()
     fname = f"api_test_{unique_id}.txt"
     r = await client.post(
         "/documents", files={"file": (fname, content, "text/plain")},

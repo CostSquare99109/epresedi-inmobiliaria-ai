@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     NVIDIA_MODEL: str = ""
     NVIDIA_TIMEOUT: int = 60
     LLM_MODE: str = "auto"  # auto | nvidia | deterministic
+    # Ordered provider chain (.env only). Unknown names are ignored.
+    LLM_PROVIDERS: str = "nvidia"
+    # LLM-first loop knobs (cost control + failure tolerance)
+    LLM_MAX_TOOL_ROUNDS: int = 4
+    LLM_MAX_TOOL_CALLS_PER_TURN: int = 8
+    LLM_HISTORY_TURNS: int = 8
+    LLM_TOOL_RESULT_MAX_CHARS: int = 4000
+    LLM_TEMPERATURE: float = 0.2
+    LLM_MAX_TOKENS: int = 4000
+    LLM_RETRY_MAX: int = 3
+    # Reasoning effort level for models that support it (NVIDIA: high | medium | low | minimal | none)
+    LLM_REASONING_LEVEL: str = "high"
 
     # embeddings
     EMBEDDING_PROVIDER: str = "auto"  # auto | nvidia | local
@@ -60,6 +72,27 @@ class Settings(BaseSettings):
     # ux
     RATE_LIMIT_PER_MINUTE: int = 20
 
+    # web search tool (agent decides when to use it; disabled = honest error)
+    WEB_SEARCH_ENABLED: bool = True
+    WEB_SEARCH_TIMEOUT: float = 10.0
+    WEB_SEARCH_MAX_RESULTS: int = 5
+    WEB_SEARCH_SNIPPET_MAX_CHARS: int = 400
+
+    # retry configuration
+    RETRY_TOOL_EXEC_MAX_ATTEMPTS: int = 3
+    RETRY_LLM_CALL_MAX_ATTEMPTS: int = 3
+    RETRY_READ_MAX_ATTEMPTS: int = 3
+    RETRY_WRITE_MAX_ATTEMPTS: int = 2
+    RETRY_FILE_IO_MAX_ATTEMPTS: int = 3
+    RETRY_BASE_DELAY: float = 0.5
+    RETRY_MAX_DELAY: float = 30.0
+    RETRY_JITTER_FACTOR: float = 0.3
+
+    # timeout configuration
+    TOOL_TIMEOUT: float = 30.0
+    LLM_TIMEOUT: float = 60.0
+    DB_TIMEOUT: float = 10.0
+
     # timezone
     TZ: str = "America/Bogota"
 
@@ -84,11 +117,23 @@ class Settings(BaseSettings):
 
     @property
     def llm_is_nvidia(self) -> bool:
+        """True when the LLM is the configured brain (semantics of LLM_MODE).
+
+        - ``nvidia``: fuerza proveedor NVIDIA (falla si no hay credenciales).
+        - ``deterministic``: nunca llama a la red; motor determinista como cerebro.
+        - ``auto``: LLM-FIRST — NVIDIA es el cerebro principal si está configurado.
+          No significa «determinista y consultar al LLM solo si hace falta».
+        """
         if self.LLM_MODE == "nvidia":
             return True
         if self.LLM_MODE == "deterministic":
             return False
         return self.nvidia_configured
+
+    @property
+    def llm_first_enabled(self) -> bool:
+        """The LLM orchestrates the turn; deterministic mode is only the failsafe."""
+        return self.llm_is_nvidia and self.nvidia_configured
 
     @property
     def embedding_is_nvidia(self) -> bool:

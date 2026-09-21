@@ -5,8 +5,6 @@ import re
 import unicodedata
 from enum import Enum
 
-import unicodedata as _ud  # explicit alias used by detect_intent
-
 
 class Intent(str, Enum):
     SEARCH_PROPERTY = "SEARCH_PROPERTY"
@@ -27,6 +25,7 @@ class Intent(str, Enum):
     SELL_PROPERTY = "SELL_PROPERTY"
     RENT_PROPERTY = "RENT_PROPERTY"
     GENERAL_FAQ = "GENERAL_FAQ"
+    GENERAL = "GENERAL"
     GREETING = "GREETING"
     UNKNOWN = "UNKNOWN"
 
@@ -42,7 +41,16 @@ _FIN = r"\b(?:financiaci[oó]n|financiar|cr[eé]dito|hipoteca|cuota inicial|subs
 _SELL = r"\b(?:vender mi|quiero vender|tengo una (?:casa|apartamento|lote|finca)|publicar mi)"
 _RENTOUT = r"\b(?:alquilar mi|arrendar mi|doy en arriendo|quiero arrendar)"
 _SEARCH_HINTS = r"\b(?:busco|buscar|encu[eé]ntrame|encontrame|muestrame|muestra|quiero ver|tienes|tienen|hay|disponibles?|opciones|describe|detalla|lista)"
+# Single image request patterns: "una imagen", "solo una", "una foto", etc.
+_SINGLE_IMAGE_REQUEST = r"\b(?:solo\s+una|solamente\s+una|una\s+sola)\s+(?:imagen|foto|fotografia)\b|\b(?:mu[eé]strame|ens[eé]name|quiero\s+ver|dame|env[ií]ame|mandame)\s+una\s+(?:imagen|foto|fotografia)\b|\b(?:quiero|necesito)\s+una\s+(?:imagen|foto)\b"
+# Multiple images request patterns: "las fotos", "las imagenes", "todas las fotos", etc.
+_MULTI_IMAGE_REQUEST = r"\b(?:las|todas\s+las)\s+(?:fotos|fotografias|imagenes)\b|\b(?:ver|mostrar|mu[eé]strame|enviar|mandar)\s+(?:las|todas)\s+(?:fotos|imagenes)\b|\b(?:todas\s+las\s+fotos|ver\s+todas)\b"
+# General image request (fallback)
 _IMAGE_REQUEST = r"\b(?:foto|fotos|fotografia|fotografias|imagen|imagenes|picture|pictures)\b|\b(?:ver|ve|mostrar|muestra|mu[eé]strame|enviar|envia|mandar|manda|mandame|enviame|compartir|comparte)\b.*\b(?:foto|fotos|fotografia|fotografias|imagen|imagenes)\b|\b(?:puedo|quiero)\s+(?:ver|tener)\b.*\b(?:foto|fotos|imagen|imagenes)\b|\b(?:envialas|enviamelas|mandalas|mandamelas|muestralas|muestramelas)\b"
+# Cover/portada specific request
+_COVER_REQUEST = r"\b(?:portada|cover)\b"
+# Ordinal image request: "la segunda imagen", "la tercera foto", etc.
+_ORDINAL_IMAGE_REQUEST = r"\b(?:la|el)\s+(?:primera|segunda|tercera|cuarta|quinta|\d+)\s+(?:imagen|foto|fotografia)\b"
 _LIST_SAVED = r"\b(?:mis b[u\u00fa]squedas?|b[u\u00fa]squedas guardadas|mis alertas|ver (?:mis )?alertas|listar alertas)\b"
 _SAVE_SEARCH = r"\b(?:av[\u00ed]same|avisame|notif[i\u00ed]came|gu[a\u00e1]rdame (?:esta |la )?b[u\u00fa]squeda|guardar b[u\u00fa]squeda|crear alerta|alerta)\b"
 _CANCEL = r"\b(?:cancel(?:ar|a|ame) (?:la|mi)? ?(?:cita|visita|reserva))"
@@ -105,8 +113,32 @@ def detect_intent(message: str) -> Intent:
 
     if re.search(_CANCEL, low):
         return Intent.CANCEL_APPOINTMENT
-    # Photo/image requests must win over generic search, document questions,
-    # property details, and contextual attribute handling.
+    
+    # Check for explicit search criteria (operation, property type, budget, location)
+    # These indicate a NEW search, not a follow-up on current property
+    has_operation = bool(re.search(r"\b(arriendo|alquiler|alquilar|arrendar|venta|comprar|comprar)\b", low))
+    has_property_type = bool(re.search(r"\b(casa|apartamento|apto|lote|local|oficina|finca)\b", low))
+    has_budget = bool(re.search(r"\b(\d+\s*(?:millones?|palos?|k|mil)|un\s+mill[oó]n|dos\s+millones?|tres\s+millones?|cuatro\s+millones?|cinco\s+millones?)\b", low))
+    has_location = bool(re.search(r"\b(en|cerca de|zona|barrio|ciudad)\b", low))
+    has_rooms = bool(re.search(r"\b(\d+\s*hab|habitaciones?|alcobas?|cuartos?)\b", low))
+    
+    # Count how many search criteria are present
+    search_criteria_count = sum([has_operation, has_property_type, has_budget, has_location, has_rooms])
+    
+    # If message has 2+ search criteria AND mentions images, it's a NEW search with image request
+    # (not a follow-up for current property images)
+    if search_criteria_count >= 2 and re.search(_IMAGE_REQUEST, low):
+        return Intent.SEARCH_PROPERTY
+    
+    # Cover/portada specific request
+    if re.search(_COVER_REQUEST, low):
+        return Intent.PROPERTY_IMAGES
+    
+    # Ordinal image request: "la segunda imagen", "la tercera foto", etc.
+    if re.search(_ORDINAL_IMAGE_REQUEST, low):
+        return Intent.PROPERTY_IMAGES
+    
+    # Photo/image requests for a specific property (no significant search criteria)
     if re.search(_IMAGE_REQUEST, low):
         return Intent.PROPERTY_IMAGES
     # comparison wins over the explicit-code rule ("diferencias entre PROP-0001 y PROP-0002")
