@@ -98,6 +98,62 @@ async def test_property_create_rejects_invalid_type(client, admin_token):
     assert r.status_code == 422
 
 
+async def test_property_create_frontend_payload_shape(client, admin_token):
+    """El payload exacto que envía el formulario web (admin-vite actions.ts).
+
+    Regresión del bug "API 422 en /properties" (2026-09-24): el formulario
+    debe crear la propiedad con todos los campos que administra el frontend.
+    """
+    headers = admin_token()
+    payload = {
+        "title": "Casa De MariaJose", "property_type": "casa", "operation": "SALE",
+        "price": 250_000_000, "currency": "COP",
+        "city": "Carepa", "neighborhood": "El Centro",
+        "address": "", "street": "", "street_number": "",
+        "descriptive_location": "", "nomenclatura": "Calle 100 # 50-20",
+        "area_m2": 120.0, "bedrooms": 3, "bedrooms_description": "",
+        "bathrooms": 2, "bathrooms_description": "",
+        "living_room_description": "", "laundry_area_description": "",
+        "parking_spaces": 1, "has_parking": True, "parking_description": "",
+        "rent_price": None, "services_included": "no_incluye",
+        "visiting_hours": [], "floors": 2,
+        "has_kitchen": True, "has_living_room": True, "has_laundry_area": False,
+        "features": ["Piscina"], "description": "Casa de prueba",
+        "status": "AVAILABLE",
+    }
+    # httpx `json=` envía Content-Type: application/json, igual que el
+    # frontend corregido (client.ts fija la cabecera para cuerpos string).
+    r = await client.post("/properties", json=payload, headers=headers)
+    assert r.status_code == 200, r.text
+    prop = r.json()
+    pid = prop["id"]
+    assert prop["title"] == "Casa De MariaJose"
+    assert prop["features"] == ["Piscina"]
+
+    r = await client.get(f"/properties/{pid}")
+    assert r.status_code == 200 and r.json()["id"] == pid
+
+    r = await client.delete(f"/properties/{pid}", headers=headers)
+    assert r.status_code == 200 and r.json()["deleted"] is True
+
+
+async def test_property_create_rejects_body_without_json_content_type(client, admin_token):
+    """Sin `Content-Type: application/json` FastAPI recibe un string, no un
+    objeto, y responde 422 `model_attributes_type`.
+
+    Este era el error visible en el panel ("API 422 en /properties") cuando el
+    cliente fetch enviaba el JSON como text/plain. El frontend debe fijar siempre
+    la cabecera (ver admin-vite/src/api/client.ts).
+    """
+    import json as json_mod
+
+    raw = json_mod.dumps({"title": "X", "property_type": "casa", "price": 1})
+    headers = admin_token()
+    r = await client.post("/properties", content=raw, headers=headers)
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["type"] == "model_attributes_type"
+
+
 # ------------------------------------------------------------------- documents
 async def test_document_upload_requires_admin(client):
     r = await client.post(

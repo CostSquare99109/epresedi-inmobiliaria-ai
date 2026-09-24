@@ -114,7 +114,7 @@ async def bootstrap() -> None:
     log.info("boot env=%s host=%s:%s", s.APP_ENV, s.APP_HOST, s.APP_PORT)
 
     if not try_start_postgres():
-        log.warning("postgres not auto-started (docker or manual start expected)")
+        log.warning("postgres not auto-started; manual start expected (pg_ctl)")
     if not try_start_redis():
         log.warning("redis not auto-started; queue falls back to memory (see docs)")
     await wait_for_postgres()
@@ -135,7 +135,7 @@ async def bootstrap() -> None:
         if not version:
             raise RuntimeError(
                 "pgvector no instalado. En Termux: make+install manual (docs/local-development.md); "
-                "con Docker usa la imagen pgvector/pgvector."
+                "requiere compilar pgvector o instalar desde el repositorio de paquetes."
             )
         log.info("pgvector_ok version=%s", version)
     finally:

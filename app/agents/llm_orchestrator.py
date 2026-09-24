@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 import uuid as uuid_mod
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -27,6 +28,7 @@ from app.agents.runtime import AgentRuntime, ProgressCallback, TurnOutcome
 from app.agents.state import describe_state
 from app.agents.tools import ToolContext
 from app.ai.llm import LLMProvider
+from app.core.bizconfig import get_business_timezone
 from app.core.logging import get_logger
 from app.core.settings import get_settings
 from app.database.models import AiEvent, Role
@@ -307,8 +309,6 @@ class PureLLMOrchestrator:
                 f"tipo={prefs.property_type or 's/d'}, operación={prefs.operation or 's/d'}, "
                 f"presupuesto máx={prefs.max_budget or 's/d'}."
             )
-        from zoneinfo import ZoneInfo
-        from app.core.bizconfig import get_business_timezone
         # Obtener la zona horaria del negocio y la hora actual en esa zona
         business_tz_name = await get_business_timezone()
         try:

@@ -41,12 +41,19 @@ class SearchFilters:
     operation: str | None = None
     city: str | None = None
     neighborhood: str | None = None
+    branch_id: str | None = None
     min_price: float | None = None
     max_price: float | None = None
     min_area: float | None = None
     bedrooms: int | None = None
     bathrooms: int | None = None
     parking: int | None = None
+    floors: int | None = None
+    floor_offer_type: str | None = None
+    offered_floor: int | None = None
+    has_kitchen: bool | None = None
+    has_living_room: bool | None = None
+    has_laundry_area: bool | None = None
     query_text: str = ""
     include_unavailable: bool = False
     limit: int = 8
@@ -54,8 +61,10 @@ class SearchFilters:
     def to_dict(self) -> dict:
         d = {}
         for k in (
-            "property_type", "operation", "city", "neighborhood",
+            "property_type", "operation", "city", "neighborhood", "branch_id",
             "min_price", "max_price", "min_area", "bedrooms", "bathrooms", "parking",
+            "floors", "floor_offer_type", "offered_floor",
+            "has_kitchen", "has_living_room", "has_laundry_area",
         ):
             v = getattr(self, k)
             if v is not None:
@@ -67,8 +76,10 @@ class SearchFilters:
     @classmethod
     def from_dict(cls, d: dict) -> SearchFilters:
         known = {k: v for k, v in d.items() if k in {
-            "property_type", "operation", "city", "neighborhood", "min_price", "max_price",
-            "min_area", "bedrooms", "bathrooms", "parking", "query_text",
+            "property_type", "operation", "city", "neighborhood", "branch_id",
+            "min_price", "max_price", "min_area", "bedrooms", "bathrooms", "parking",
+            "floors", "floor_offer_type", "offered_floor",
+            "has_kitchen", "has_living_room", "has_laundry_area", "query_text",
         }}
         return cls(**known, include_unavailable=False)
 
@@ -90,6 +101,14 @@ class SearchFilters:
             parts.append(f"{self.bathrooms}+ baños")
         if self.parking:
             parts.append(f"{self.parking}+ parqueaderos")
+        if self.floors:
+            parts.append(f"{self.floors}+ pisos")
+        if self.offered_floor:
+            parts.append(f"piso {self.offered_floor} ofertado")
+        if self.floor_offer_type:
+            from app.properties.flooring import floor_offer_label
+
+            parts.append(floor_offer_label(self.floor_offer_type).lower())
         return ", ".join(parts) or "sin filtros"
 
 
@@ -127,6 +146,25 @@ TYPE_RE = re.compile(
 AREA_RE = re.compile(r"(?P<n>\d+)\s*(?:m2|mts2|metros\s*c[uú]adrados|metros)\b")
 
 MAX_ROOMS_RE = re.compile(r"m[aá]ximo\s+(?P<n>\d+|un|una|dos|tres|cuatro|cinco)\s*habitaciones")
+
+FLOORS_RE = re.compile(r"(?P<n>\d+|un|una|dos|tres|cuatro|cinco)\s*(?:pisos?|plantas?|niveles?)\b")
+# Piso específico ofertado: "piso 2", "piso número 1", "el segundo piso",
+# "solamente el primer piso". Singular "piso" + número/ordinal (FLOORS_RE usa
+# plural o número antepuesto, así que no colisionan en el caso común).
+OFFERED_FLOOR_NUM_RE = re.compile(r"\bpiso\s*(?:n[uú]mero\s*)?(?P<n>\d+)\b")
+OFFERED_FLOOR_ORD_RE = re.compile(
+    r"\b(?P<ord>primer(?:o)?|segundo|tercer(?:o)?|cuarto|quinto)\s*piso\b"
+)
+ORDINAL_TO_NUM = {
+    "primer": 1, "primero": 1,
+    "segundo": 2,
+    "tercer": 3, "tercero": 3,
+    "cuarto": 4,
+    "quinto": 5,
+}
+KITCHEN_RE = re.compile(r"\b(cocina(?: integral| semiintegral| abierta)?)\b")
+LIVING_ROOM_RE = re.compile(r"\b(sala(?: de estar)?|estar)\b")
+LAUNDRY_RE = re.compile(r"\b(zona de lavado|lavand[eé]r[ai]|cuarto de lavado|área de lavado)\b")
 
 
 def _match_span(text_span: str, regex: re.Pattern, low: str) -> tuple | None:
@@ -246,6 +284,44 @@ def extract_filters(message: str) -> tuple[SearchFilters, str]:
         except ValueError:
             pass
 
+    # --- offered floor ("piso 2", "el segundo piso"): qué parte se ofrece.
+    # Se extrae ANTES que el total para consumir el span ordinal.
+    m = OFFERED_FLOOR_NUM_RE.search(low)
+    if m:
+        try:
+            n = int(m.group("n"))
+        except ValueError:
+            n = None
+        if n and 1 <= n <= 99:
+            filters.offered_floor = n
+            consume(m)
+    else:
+        m = OFFERED_FLOOR_ORD_RE.search(low)
+        if m:
+            n = ORDINAL_TO_NUM.get(m.group("ord"))
+            if n:
+                filters.offered_floor = n
+                consume(m)
+
+    # --- floors
+    m = FLOORS_RE.search(low)
+    if m:
+        n = _num(m.group("n"))
+        if n:
+            filters.floors = n
+            consume(m)
+
+    # --- kitchen / living room / laundry area (boolean features)
+    if KITCHEN_RE.search(low):
+        filters.has_kitchen = True
+        consume(KITCHEN_RE.search(low))
+    if LIVING_ROOM_RE.search(low):
+        filters.has_living_room = True
+        consume(LIVING_ROOM_RE.search(low))
+    if LAUNDRY_RE.search(low):
+        filters.has_laundry_area = True
+        consume(LAUNDRY_RE.search(low))
+
     # --- leftover → semantic query
     leftover_parts: list[str] = []
     last = 0
@@ -318,6 +394,9 @@ def _build_where(filters: SearchFilters, params: dict) -> str:
     if filters.neighborhood:
         conds.append("p.neighborhood ILIKE :hood")
         params["hood"] = f"%{filters.neighborhood}%"
+    if filters.branch_id:
+        conds.append("p.branch_id = :branch_id")
+        params["branch_id"] = filters.branch_id
     if filters.max_price is not None:
         conds.append("p.price <= :max_price")
         params["max_price"] = filters.max_price
@@ -336,6 +415,32 @@ def _build_where(filters: SearchFilters, params: dict) -> str:
     if filters.parking is not None:
         conds.append("p.parking_spaces >= :parking")
         params["parking"] = filters.parking
+    if filters.floors is not None:
+        conds.append("p.floors >= :floors")
+        params["floors"] = filters.floors
+    if filters.floor_offer_type is not None:
+        conds.append("COALESCE(p.floor_offer_type, 'full_property') = :floor_offer_type")
+        params["floor_offer_type"] = filters.floor_offer_type
+    if filters.offered_floor is not None:
+        # Una casa completa de N pisos contiene físicamente el piso pedido,
+        # pero NO es lo mismo que ofertar solo ese piso: se devuelven ambas
+        # y el agente las distingue por floor_offer_type/offered_floors.
+        conds.append(
+            "((p.offered_floors @> CAST(:offered_json AS jsonb)) OR "
+            "(COALESCE(p.floor_offer_type, 'full_property') = 'full_property' "
+            "AND p.floors >= :offered_floor))"
+        )
+        params["offered_json"] = f"[{int(filters.offered_floor)}]"
+        params["offered_floor"] = int(filters.offered_floor)
+    if filters.has_kitchen is not None:
+        conds.append("p.has_kitchen = :has_kitchen")
+        params["has_kitchen"] = filters.has_kitchen
+    if filters.has_living_room is not None:
+        conds.append("p.has_living_room = :has_living_room")
+        params["has_living_room"] = filters.has_living_room
+    if filters.has_laundry_area is not None:
+        conds.append("p.has_laundry_area = :has_laundry_area")
+        params["has_laundry_area"] = filters.has_laundry_area
     return " AND ".join(conds) if conds else "TRUE"
 
 

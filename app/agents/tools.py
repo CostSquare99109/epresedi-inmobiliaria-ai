@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appointments import service as appt_service
+from app.core.bizconfig import get_business_timezone
 from app.core.logging import get_logger
 from app.crm import service as crm_service
 from app.database.models import Property
@@ -48,6 +49,35 @@ ORDINALS = {"primera": 0, "primero": 0, "1": 0, "1ª": 0, "1a": 0,
             "segunda": 1, "segundo": 1, "2": 1, "2ª": 1, "2a": 1,
             "tercera": 2, "tercero": 2, "3": 2, "3ª": 2, "3a": 2,
             "cuarta": 3, "cuarto": 3, "4": 3, "quinta": 4, "quinto": 4, "5": 4}
+
+# Referencias anafóricas genéricas ("la casa", "esa propiedad", ...): no son
+# identificadores literales; se resuelven contra el contexto conversacional
+# (última propiedad mostrada) en vez de buscarse como texto.
+_GENERIC_PROPERTY_REFS = frozenset({
+    "la casa", "esa casa", "esta casa", "una casa", "de la casa",
+    "la propiedad", "esa propiedad", "esta propiedad", "una propiedad",
+    "la que me mostraste", "la anterior",
+    "el inmueble", "ese inmueble", "este inmueble",
+    "la ficha", "esa ficha",
+})
+
+
+def _normalize_image_ref(ref: Any) -> Any:
+    """Convierte referencias genéricas de fotos en resolución contextual.
+
+    Si el LLM pasa literalmente «la casa» / «esa propiedad» como property_id,
+    tratarlo como texto fallaría (no es código ni UUID). Devolver None activa
+    la resolución contextual de _find_property (último resultado / foco).
+    """
+    if ref is None:
+        return None
+    text = str(ref).strip()
+    if not text:
+        return None
+    low = re.sub(r"\s+", " ", text.lower().strip(" .,:;"))
+    if low in _GENERIC_PROPERTY_REFS:
+        return None
+    return ref
 
 # ------------------------------------------------------------------ contact validation
 
@@ -396,6 +426,10 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
         if raw.get("bedrooms") is not None: filters.bedrooms = int(raw["bedrooms"])
         if raw.get("bathrooms") is not None: filters.bathrooms = int(raw["bathrooms"])
         if raw.get("parking") is not None: filters.parking = int(raw["parking"])
+        if raw.get("floors") is not None: filters.floors = int(raw["floors"])
+        if raw.get("offered_floor") is not None: filters.offered_floor = int(raw["offered_floor"])
+        if raw.get("floor_offer_type") in ("full_property", "single_floor", "multiple_floors", "partial"):
+            filters.floor_offer_type = raw["floor_offer_type"]
         if raw.get("min_area") is not None: filters.min_area = float(raw["min_area"])
         if semantic and not filters.query_text:
             filters.query_text = semantic
@@ -507,25 +541,169 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
             ]
 
     elif name == "get_property_images":
-        from app.api.files import list_property_images, property_images_dir
+        prop = await _find_property(session, ctx, _normalize_image_ref(args.get("property_id")))
+        if prop is None:
+            result = {
+                "ok": False, "retryable": False,
+                "code": "PROPERTY_NOT_FOUND",
+                "error": "Propiedad no encontrada o referencia ambigua. Pide al usuario que precise cuál propiedad.",
+                "reason": "property_not_found",
+            }
+        else:
+            group = args.get("group")
+            extra_name = args.get("extra_name")
+            try:
+                images = await prop_repo.get_property_images(
+                    session, prop.id, group=group, extra_name=extra_name,
+                )
+            except ValueError as e:
+                result = {
+                    "ok": False, "retryable": False,
+                    "code": "INVALID_GROUP",
+                    "error": str(e),
+                    "reason": "invalid_group",
+                }
+                images = None
+            if images is None:
+                pass
+            else:
+                limit = args.get("limit")
+                if isinstance(limit, int) and limit > 0:
+                    images = images[: min(limit, 10)]
+                log.info(
+                    "property_image_request property_id=%s code=%s db_count=%s limit=%s group=%s",
+                    prop.id, prop.code, len(images), limit, group,
+                )
+                if not images:
+                    if group:
+                        result = {
+                            "ok": False, "retryable": False,
+                            "code": "NO_IMAGES",
+                            "error": (
+                                f"Esta propiedad no tiene fotografías de "
+                                f"'{extra_name or group}' disponibles."
+                            ),
+                            "reason": "no_image",
+                            "property_id": str(prop.id),
+                            "property_code": prop.code,
+                            "group": group,
+                        }
+                    else:
+                        result = {
+                            "ok": False, "retryable": False,
+                            "code": "NO_IMAGES",
+                            "error": "En este momento esta propiedad no tiene fotografías disponibles.",
+                            "reason": "no_image",
+                            "property_id": str(prop.id),
+                            "property_code": prop.code,
+                        }
+                else:
+                    result["images"] = [img.to_dict() for img in images]
+                    result["count"] = len(images)
+                    result["property_id"] = str(prop.id)
+                    result["property_code"] = prop.code
+                    # Resumen por característica para que el LLM elija bien.
+                    by_group: dict[str, int] = {}
+                    for img in images:
+                        g = img.group or "general"
+                        key = f"extra:{img.extra_name}" if g == "extra" and img.extra_name else g
+                        by_group[key] = by_group.get(key, 0) + 1
+                    result["groups"] = by_group
 
+    elif name == "get_branch_info":
         prop = await _find_property(session, ctx, args.get("property_id"))
         if prop is None:
-            # Distinguir "propiedad no encontrada" de "sin imágenes cargadas"
-            # es evidencia distinta para el agente (§7/§25).
             result = {
                 "ok": False, "retryable": False,
                 "error": "Propiedad no encontrada o referencia ambigua.",
             }
+        elif prop.branch is None:
+            result = {
+                "ok": False, "retryable": False,
+                "error": "Esta propiedad no tiene sede asignada.",
+            }
         else:
-            filenames = list_property_images(str(prop.id))
-            limit = args.get("limit")
-            if isinstance(limit, int) and limit > 0:
-                filenames = filenames[:limit]
-            base = property_images_dir(str(prop.id))
-            result["images"] = [str(base / f) for f in filenames]
-            result["property_id"] = str(prop.id)
-            result["property_code"] = prop.code
+            result["branch"] = prop.branch.to_dict()
+
+    elif name == "get_business_hours":
+        # Can be called with property_id (gets branch hours) or branch_id directly
+        branch_id = None
+        if args.get("property_id"):
+            prop = await _find_property(session, ctx, args.get("property_id"))
+            if prop is None:
+                result = {"ok": False, "error": "Propiedad no encontrada."}
+            else:
+                branch_id = prop.branch_id
+        elif args.get("branch_id"):
+            try:
+                branch_id = uuid_mod.UUID(str(args.get("branch_id")))
+            except ValueError:
+                result = {"ok": False, "error": "branch_id inválido."}
+
+        if result.get("ok", True):
+            if branch_id is None:
+                # Global hours
+                from app.core.bizconfig import get_appointment_hours_by_weekday
+                hours_map = await get_appointment_hours_by_weekday()
+                tz = await get_business_timezone()
+                result["timezone"] = tz
+                result["hours"] = {}
+                day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                for day_num, hours in hours_map.items():
+                    if hours:
+                        result["hours"][day_names[day_num]] = {
+                            "open": f"{hours[0]:02d}:00",
+                            "close": f"{hours[-1]+1:02d}:00",
+                            "slots": [f"{h:02d}:00" for h in hours],
+                        }
+                    else:
+                        result["hours"][day_names[day_num]] = {"closed": True}
+            else:
+                # Branch-specific hours from DB
+                hours = await prop_repo.get_business_hours_for_branch(session, branch_id)
+                if not hours:
+                    # Fallback to global
+                    from app.core.bizconfig import get_appointment_hours_by_weekday
+                    hours_map = await get_appointment_hours_by_weekday()
+                    tz = await get_business_timezone()
+                    result["timezone"] = tz
+                    result["hours"] = {}
+                    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                    for day_num, h_list in hours_map.items():
+                        if h_list:
+                            result["hours"][day_names[day_num]] = {
+                                "open": f"{h_list[0]:02d}:00",
+                                "close": f"{h_list[-1]+1:02d}:00",
+                                "slots": [f"{h:02d}:00" for h in h_list],
+                            }
+                        else:
+                            result["hours"][day_names[day_num]] = {"closed": True}
+                else:
+                    tz = await get_business_timezone()
+                    result["timezone"] = tz
+                    result["hours"] = {}
+                    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                    for day_num in range(7):
+                        day_hours = [h for h in hours if h.weekday == day_num]
+                        if day_hours:
+                            intervals = []
+                            for h in day_hours:
+                                if h.is_closed:
+                                    intervals.append({"closed": True})
+                                else:
+                                    intervals.append({
+                                        "open": h.open_time.strftime("%H:%M") if h.open_time else None,
+                                        "close": h.close_time.strftime("%H:%M") if h.close_time else None,
+                                    })
+                            result["hours"][day_names[day_num]] = {"intervals": intervals}
+                        else:
+                            result["hours"][day_names[day_num]] = {"closed": True}
+
+    elif name == "list_branches":
+        active_only = args.get("active_only", True)
+        branches = await prop_repo.list_branches(session, active_only=active_only)
+        result["branches"] = [b.to_dict() for b in branches]
+        result["count"] = len(branches)
 
     elif name == "save_property":
         prop = await _find_property(session, ctx, args.get("property_id"))
@@ -550,6 +728,11 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
     elif name == "list_saved_searches":
         sses = await crm_service.list_saved_searches(session, ctx.user_id)
         result["saved_searches"] = [{"id": str(s.id), "name": s.name, "filters": s.filters} for s in sses]
+
+    elif name == "list_favorites":
+        favs = await crm_service.list_favorites(session, ctx.user_id)
+        result["favorites"] = [f.to_dict() for f in favs]
+        result["count"] = len(favs)
 
     elif name == "create_alert":
         # Create a new property alert with full Telegram context

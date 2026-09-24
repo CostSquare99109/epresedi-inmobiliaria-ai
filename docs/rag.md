@@ -18,7 +18,7 @@ Limpieza       espacios, \x00, normalización
 Chunking       app/rag/chunking.py: párrafos (máx 900 chars, solapamiento 120), detecta secciones
                ("# …", "Artículo N …", líneas en MAYÚSCULAS tipo "FINANCIACION:")
    ↓
-Metadata       document_id, chunk_id, property_id, project_id, document_type, filename, page, section, chunk_hash
+Metadata       document_id, chunk_id, property_id, document_type, filename, page, section, chunk_hash
    ↓
 Embeddings     EmbeddingProvider (NVIDIA nv-embedqa-e5-v5 o local hash 256-dim)
    ↓
@@ -27,7 +27,7 @@ pgvector       document_chunks.embedding (vector 256)
 
 ## Trazabilidad de cada chunk
 
-`document_id`, `chunk_id`, `property_id`, `project_id`, `document_type`, `filename`, `page`, `section`, `content`, `embedding`, `chunk_hash`, `created_at`, `updated_at`.
+`document_id`, `chunk_id`, `property_id`, `document_type`, `filename`, `page`, `section`, `content`, `embedding`, `chunk_hash`, `created_at`, `updated_at`.
 
 ## Versioning
 

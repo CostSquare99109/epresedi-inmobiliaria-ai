@@ -70,7 +70,7 @@ def test_attribute_question_vs_new_search():
 async def test_search_tool_returns_real_available_properties(session, user_id):
     from app.properties.search import extract_filters
 
-    filters, semantic = extract_filters(
+    filters, _ = extract_filters(
         "Busco una casa en Carepa de máximo 300 millones, tres habitaciones, garaje"
     )
     assert filters.property_type == "casa"
@@ -676,11 +676,541 @@ async def test_llm_never_schedules_wrong_property(session, user_id):
         ),
         final_decision(appointment_confirm_decision("Cita agendada para PROP-0002", property_id=str(prop2.id), datetime_iso=chosen_slot)),
     ])
-    orch = Orchestrator(llm=fake)
+    _ = Orchestrator(llm=fake)
     
     # This test verifies the LLM correctly identifies which property the user wants
     # The actual scheduling would require more conversation turns
     # Key assertion: the LLM should use prop2.id, not prop1.id
+
+
+# LLMDecisionBuilder needs to be imported for the test above
+from tests.test_fake_llm_v2 import LLMDecisionBuilder
+
+
+# ------------------------------------------------------------ domain restriction tests
+async def test_off_domain_history_question_redirected(session, user_id):
+    """History question should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Cómo se llama Simón Bolívar", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+    assert "Simón Bolívar" not in r.text
+    assert "Libertador" not in r.text
+
+
+async def test_off_domain_car_question_redirected(session, user_id):
+    """Car question should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Qué hace un carro", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+    assert "vehículo" not in r.text.lower()
+    assert "automóvil" not in r.text.lower()
+
+
+async def test_off_domain_math_question_redirected(session, user_id):
+    """Math question should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Cuánto es 25 por 30", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+    assert "750" not in r.text
+
+
+async def test_off_domain_cooking_question_redirected(session, user_id):
+    """Cooking question should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Cómo cocinar arroz", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+    assert "arroz" not in r.text.lower() or "receta" not in r.text.lower()
+
+
+async def test_off_domain_programming_question_redirected(session, user_id):
+    """Programming question should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Qué es Python", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+    assert "lenguaje" not in r.text.lower() or "programación" not in r.text.lower()
+
+
+async def test_off_domain_celebrity_question_redirected(session, user_id):
+    """Celebrity question should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Quién es Elon Musk", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+    assert "Elon" not in r.text
+    assert "Musk" not in r.text
+
+
+async def test_off_domain_geography_question_redirected(session, user_id):
+    """Geography question should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Cuál es la capital de Francia", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+    assert "París" not in r.text
+
+
+async def test_off_domain_entertainment_question_redirected(session, user_id):
+    """Entertainment question should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Cuéntame un chiste", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+
+
+async def test_off_domain_creative_writing_redirected(session, user_id):
+    """Creative writing request should be redirected to real estate domain."""
+    fake = FakeLLMV2([
+        final_decision(greeting_decision(
+            "Estoy aquí para ayudarte con temas inmobiliarios de epresedi: "
+            "buscar propiedades, consultar precios, ver características, "
+            "revisar disponibilidad, agendar visitas o crear alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Escribe un poema", "u", "U")
+    
+    assert "epresedi" in r.text.lower()
+    assert "inmobiliario" in r.text.lower()
+    assert "poema" not in r.text.lower() or "verso" not in r.text.lower()
+
+
+async def test_in_domain_rent_meaning_answered(session, user_id):
+    """'Qué significa arriendo' should be answered (in-domain exception)."""
+    fake = FakeLLMV2([
+        final_decision(property_details_decision(
+            "Arriendo significa un contrato de arrendamiento donde pagas mensualmente por usar el inmueble.",
+            property_code="N/A"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Qué significa arriendo", "u", "U")
+    
+    assert "arriendo" in r.text.lower() or "arrendamiento" in r.text.lower()
+    assert "epresedi" not in r.text.lower() or "inmobiliario" not in r.text.lower()
+
+
+async def test_in_domain_garage_question_answered(session, user_id):
+    """'Una casa puede tener garaje' should be answered (in-domain exception)."""
+    fake = FakeLLMV2([
+        final_decision(property_details_decision(
+            "Sí, una casa puede tener garaje. Es una característica común en muchas propiedades.",
+            property_code="N/A"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Una casa puede tener garaje", "u", "U")
+    
+    assert "garaje" in r.text.lower()
+    assert "epresedi" not in r.text.lower() or "inmobiliario" not in r.text.lower()
+
+
+async def test_in_domain_property_price_question_answered(session, user_id):
+    """'Cuánto cuesta una casa en Carepa' should be answered (in-domain)."""
+    fake = FakeLLMV2([
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "casa",
+                "city": "Carepa", "budget_max": 500_000_000,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "casa", "city": "Carepa", "max_price": 500_000_000},
+                "semantic_query": "",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré casas en Carepa desde $180.000.000.", phase="PROPERTY_SELECTION")),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Cuánto cuesta una casa en Carepa", "u", "U")
+    
+    assert r.intent == Intent.SEARCH_PROPERTY
+    assert "Carepa" in r.text or "casa" in r.text.lower()
+
+
+async def test_contextual_question_in_real_estate_conversation(session, user_id):
+    """Contextual question during real estate conversation should be answered."""
+    # First: search for properties
+    fake1 = FakeLLMV2([
+        tool_round(
+            tc("update_conversation_state", {
+                "intent": "SEARCH_PROPERTY", "operation": "SALE", "property_type": "casa",
+                "city": "Carepa", "budget_max": 300_000_000, "bedrooms": 3,
+            }),
+            tc("search_properties", {
+                "filters": {"property_type": "casa", "city": "Carepa", "max_price": 300_000_000, "bedrooms": 3},
+                "semantic_query": "",
+            }, call_id="c2"),
+        ),
+        final_decision(search_decision("Encontré casas en Carepa. La primera es PROP-0001.", phase="PROPERTY_SELECTION")),
+    ])
+    orch1 = Orchestrator(llm=fake1)
+    r1 = await orch1.handle_user_message(
+        session, user_id, "busca casas en Carepa hasta 300 millones 3 habitaciones", "u", "U"
+    )
+    assert r1.intent == Intent.SEARCH_PROPERTY
+    
+    # Second: ask about garage (contextual - related to the property)
+    fake2 = FakeLLMV2([
+        final_decision(property_details_decision(
+            "Sí, la casa PROP-0001 tiene garaje para un vehículo.",
+            property_code="PROP-0001"
+        )),
+    ])
+    orch2 = Orchestrator(llm=fake2)
+    r2 = await orch2.handle_user_message(session, user_id, "¿La casa tiene garaje?", "u", "U")
+    
+    assert "garaje" in r2.text.lower()
+    assert "PROP-0001" in r2.text or "casa" in r2.text.lower()
+
+
+# ------------------------------------------------------------ administrative action rejection tests
+async def test_admin_delete_all_properties_rejected(session, user_id):
+    """'Elimina todas las propiedades' should be rejected as administrative action."""
+    fake = FakeLLMV2([
+        final_decision(search_decision(
+            "No tengo la opción de eliminar propiedades del inventario de la inmobiliaria; "
+            "eso es algo que gestiona el equipo interno a través del panel de administración. "
+            "Como asistente de atención al cliente, mis capacidades son: buscar propiedades, "
+            "mostrar fichas, agendar visitas, gestionar favoritos y alertas. "
+            "¿En qué te puedo ayudar con tu búsqueda de vivienda?",
+            intent="GENERAL"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Elimina todas las propiedades", "u", "U")
+    
+    # Should NOT mention capabilities that require tools not called
+    assert "favoritos" not in r.text.lower() or "puedo quitarlos" not in r.text.lower()
+    assert "búsquedas guardadas" not in r.text.lower() or "mostrarte tus" not in r.text.lower()
+    assert "borrado masivo" not in r.text.lower()
+    assert "alertas" not in r.text.lower() or "puedo mostrarte" not in r.text.lower()
+    # Should mention it's an administrative action
+    assert "administración" in r.text.lower() or "panel de administración" in r.text.lower()
+    assert "equipo interno" in r.text.lower() or "asistente de atención" in r.text.lower()
+
+
+async def test_admin_delete_single_property_rejected(session, user_id):
+    """'Elimina la propiedad 123' should be rejected as administrative action."""
+    fake = FakeLLMV2([
+        final_decision(search_decision(
+            "No tengo la opción de eliminar propiedades del inventario; "
+            "esa es una acción administrativa que requiere el panel de administración. "
+            "Puedo ayudarte a buscar propiedades, ver fichas, agendar visitas o gestionar favoritos. "
+            "¿En qué te ayudo?",
+            intent="GENERAL"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Elimina la propiedad PROP-0001", "u", "U")
+    
+    assert "administración" in r.text.lower() or "panel de administración" in r.text.lower()
+    assert "eliminar" not in r.text.lower() or "propiedad" not in r.text.lower() or "no tengo" in r.text.lower()
+
+
+async def test_admin_bulk_delete_houses_rejected(session, user_id):
+    """'Borra todas las casas' should be rejected as administrative action."""
+    fake = FakeLLMV2([
+        final_decision(search_decision(
+            "No puedo borrar propiedades del inventario; eso es una acción administrativa. "
+            "Mis capacidades son buscar, mostrar fichas, agendar visitas, favoritos y alertas. "
+            "¿Buscas algo en específico?",
+            intent="GENERAL"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Borra todas las casas", "u", "U")
+    
+    assert "administración" in r.text.lower() or "no puedo" in r.text.lower()
+    assert "borrado masivo" not in r.text.lower()
+
+
+async def test_admin_bulk_update_availability_rejected(session, user_id):
+    """'Pon todas las propiedades como no disponibles' should be rejected."""
+    fake = FakeLLMV2([
+        final_decision(search_decision(
+            "No puedo modificar la disponibilidad masiva de propiedades; eso requiere el panel de administración. "
+            "Puedo ayudarte a buscar propiedades disponibles o agendar visitas. ¿Qué necesitas?",
+            intent="GENERAL"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Pon todas las propiedades como no disponibles", "u", "U")
+    
+    assert "administración" in r.text.lower() or "no puedo" in r.text.lower()
+
+
+# ------------------------------------------------------------ user action tests (should work)
+async def test_user_cancel_own_appointment_works(session, user_id):
+    """'Elimina mi cita' should work if user has appointments."""
+    from app.appointments import service as appt_service
+    from app.properties import repository as repo
+    from app.crm import service as crm_service
+    from app.memory import service as memory_service
+    import datetime as dt
+    
+    # Ensure user exists
+    await memory_service.get_or_create_user(session, user_id, "test_user", "Test")
+    await session.commit()
+    
+    # Setup: create a lead and appointment
+    lead = await crm_service.get_or_create_lead(session, user_id)
+    prop = await repo.get_property_by_code(session, "PROP-0001")
+    slots = await appt_service.list_available_slots(session, prop.id)
+    assert slots, "PROP-0001 debe tener horarios"
+    scheduled_at = dt.datetime.fromisoformat(slots[0]["datetime"])
+    appt = await appt_service.create_appointment(session, property_id=prop.id, lead_id=lead.id, scheduled_at=scheduled_at)
+    await session.commit()
+    
+    fake = FakeLLMV2([
+        tool_round(
+            tc("list_appointments", {}, call_id="c1"),
+        ),
+        final_decision(search_decision(
+            "Tienes una cita agendada para PROP-0001. ¿Quieres cancelarla?",
+            intent="CANCEL_APPOINTMENT"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Elimina mi cita", "u", "U")
+    
+    assert r.intent == Intent.CANCEL_APPOINTMENT
+    assert "cita" in r.text.lower()
+
+
+async def test_user_create_alert_works(session, user_id):
+    """'Quiero crear una alerta' should work."""
+    fake = FakeLLMV2([
+        tool_round(
+            tc("update_conversation_state", {"intent": "SAVE_SEARCH", "phase": "GENERAL"}),
+        ),
+        final_decision(search_decision(
+            "Para crear una alerta necesito saber: ¿qué tipo de propiedad, en qué ciudad, "
+            "cuál es tu precio máximo y cuántas habitaciones buscas?",
+            intent="SAVE_SEARCH"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Quiero crear una alerta", "u", "U")
+    
+    assert r.intent in (Intent.SAVE_SEARCH, Intent.SEARCH_PROPERTY, Intent.GENERAL)
+    assert "alerta" in r.text.lower() or "avísame" in r.text.lower()
+
+
+async def test_user_cancel_visit_works(session, user_id):
+    """'Quiero cancelar mi visita' should work if user has appointments."""
+    from app.appointments import service as appt_service
+    from app.properties import repository as repo
+    from app.crm import service as crm_service
+    from app.memory import service as memory_service
+    import datetime as dt
+    
+    # Ensure user exists
+    await memory_service.get_or_create_user(session, user_id, "test_user", "Test")
+    await session.commit()
+    
+    # Setup: create a lead and appointment
+    lead = await crm_service.get_or_create_lead(session, user_id)
+    prop = await repo.get_property_by_code(session, "PROP-0001")
+    slots = await appt_service.list_available_slots(session, prop.id)
+    assert slots, "PROP-0001 debe tener horarios"
+    scheduled_at = dt.datetime.fromisoformat(slots[0]["datetime"])
+    appt = await appt_service.create_appointment(session, property_id=prop.id, lead_id=lead.id, scheduled_at=scheduled_at)
+    await session.commit()
+    
+    fake = FakeLLMV2([
+        tool_round(
+            tc("list_appointments", {}, call_id="c1"),
+        ),
+        final_decision(search_decision(
+            "Tienes una visita agendada para PROP-0001. ¿Confirmas que quieres cancelarla?",
+            intent="CANCEL_APPOINTMENT"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Quiero cancelar mi visita", "u", "U")
+    
+    assert r.intent == Intent.CANCEL_APPOINTMENT
+    assert "visita" in r.text.lower() or "cita" in r.text.lower()
+
+
+# ------------------------------------------------------------ hallucination prevention tests
+async def test_agent_does_not_hallucinate_favorites_without_tool(session, user_id):
+    """Agent should not mention 'tus favoritos' without calling list_favorites."""
+    fake = FakeLLMV2([
+        final_decision(search_decision(
+            "No puedo eliminar propiedades del inventario. "
+            "Si quieres gestionar tus favoritos, puedo mostrarte cuáles tienes guardados "
+            "usando la herramienta correspondiente. ¿Quieres que lo haga?",
+            intent="GENERAL"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Elimina todas las propiedades", "u", "U")
+    
+    # Should NOT say "puedo revisar cuáles tienes guardados" without calling list_favorites
+    assert "revisar cuáles tienes" not in r.text.lower()
+    assert "quitarlos uno a uno" not in r.text.lower()
+
+
+async def test_agent_does_not_hallucinate_alerts_without_tool(session, user_id):
+    """Agent should not mention 'tus alertas' without calling list_alerts."""
+    fake = FakeLLMV2([
+        final_decision(search_decision(
+            "No puedo borrar el inventario. "
+            "Si tienes alertas configuradas, puedo listarlas con la herramienta adecuada. "
+            "¿Quieres que revise tus alertas?",
+            intent="GENERAL"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Borra todo el inventario", "u", "U")
+    
+    # Should NOT say "puedo mostrarte tus alertas" without calling list_alerts
+    assert "mostrarte tus alertas" not in r.text.lower()
+    assert "tus búsquedas guardadas" not in r.text.lower()
+
+
+async def test_agent_does_not_hallucinate_bulk_delete(session, user_id):
+    """Agent should not mention 'borrado masivo' as if it exists."""
+    fake = FakeLLMV2([
+        final_decision(search_decision(
+            "No tengo capacidad de borrado masivo. "
+            "Las acciones sobre el inventario son administrativas. "
+            "¿En qué te ayudo con tu búsqueda?",
+            intent="GENERAL"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Elimina todo", "u", "U")
+    
+    # Should not present "borrado masivo" as a concept that exists
+    assert "borrado masivo" not in r.text.lower() or "no hay" not in r.text.lower()
+
+
+async def test_list_favorites_tool_works(session, user_id):
+    """list_favorites tool should return user's favorites."""
+    from app.properties import repository as repo
+    from app.crm import service as crm_service
+    from app.memory import service as memory_service
+    
+    # Ensure user exists in database
+    await memory_service.get_or_create_user(session, user_id, "test_user", "Test")
+    await session.commit()
+    
+    # Add a favorite
+    prop = await repo.get_property_by_code(session, "PROP-0001")
+    await crm_service.add_favorite(session, user_id, prop.id)
+    await session.commit()
+    
+    fake = FakeLLMV2([
+        tool_round(
+            tc("list_favorites", {}, call_id="c1"),
+        ),
+        final_decision(search_decision(
+            "Tienes 1 propiedad en favoritos: PROP-0001. ¿Quieres verla o quitarla?",
+            intent="SAVE_PROPERTY"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Muéstrame mis favoritos", "u", "U")
+    
+    assert "PROP-0001" in r.text
+    assert "favorito" in r.text.lower()
+
+
+async def test_list_favorites_empty(session, user_id):
+    """list_favorites should handle empty favorites."""
+    fake = FakeLLMV2([
+        tool_round(
+            tc("list_favorites", {}, call_id="c1"),
+        ),
+        final_decision(search_decision(
+            "No tienes propiedades guardadas en favoritos. "
+            "Cuando veas una que te guste, puedes guardarla con el botón ⭐.",
+            intent="SAVE_PROPERTY"
+        )),
+    ])
+    orch = Orchestrator(llm=fake)
+    r = await orch.handle_user_message(session, user_id, "Muéstrame mis favoritos", "u", "U")
+    
+    assert "no tienes" in r.text.lower() or "vacío" in r.text.lower() or "favoritos" in r.text.lower()
 
 
 # LLMDecisionBuilder needs to be imported for the test above

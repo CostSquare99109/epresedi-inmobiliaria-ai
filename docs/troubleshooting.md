@@ -12,12 +12,11 @@ Muestra qué falló y cómo solucionarlo. Nunca oculta errores.
 
 ### «pgvector no instalado»
 
-- Docker: usa la imagen `pgvector/pgvector:pg18` (incluye la extensión).
 - Termux/nativo: compilación manual (`git clone https://github.com/pgvector/pgvector && make && make install`), luego `CREATE EXTENSION vector;` en la base.
 
 ### «PostgreSQL no accesible»
 
-- `docker compose up -d` o `pg_ctl -D <pgdata> start`.
+- `pg_ctl -D <pgdata> start`.
 - Revisa `DATABASE_URL` en `.env` (usuario/contraseña/puerto).
 
 ### «NVIDIA API ERROR» en doctor
@@ -61,4 +60,4 @@ Muestra qué falló y cómo solucionarlo. Nunca oculta errores.
 
 ### Redis no está disponible
 
-- El queue hace fallback a memoria (limitación: los jobs no sobreviven reinicios). Para producción, `docker compose up -d redis`.
+- El queue hace fallback a memoria (limitación: los jobs no sobreviven reinicios). Para producción, asegúrate de que `redis-server` esté corriendo.

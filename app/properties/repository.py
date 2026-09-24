@@ -9,17 +9,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.embeddings import get_embedding_provider, normalize_text
 from app.core.logging import get_logger
-from app.database.models import Operation, Property, PropertyStatus, PropertyType
+from app.database.models import Branch, BusinessHour, Operation, Property, PropertyImage, PropertyStatus, PropertyType
+from app.properties.flooring import (
+    embedding_fragment,
+    normalize_offer_type,
+    normalize_offered_floors,
+    validate_floor_offer,
+)
 
 log = get_logger(__name__)
 
 
 def property_text_for_embedding(p: Property) -> str:
     features = " ".join(p.features or [])
+    floors = getattr(p, "floors", None)
+    offer = getattr(p, "floor_offer_type", None) or "full_property"
+    offered = list(getattr(p, "offered_floors", None) or [])
+    floor_text = embedding_fragment(floors, offer, offered)
     return " ".join(
         str(x) for x in [
             p.title, p.property_type.value, p.operation.value, p.city, p.neighborhood,
-            features, p.description or "",
+            features, floor_text, p.description or "",
         ]
     )
 
@@ -37,7 +47,10 @@ async def get_property(session: AsyncSession, property_id) -> Property | None:
         return None
     from sqlalchemy.orm import selectinload
     return (await session.execute(
-        select(Property).options(selectinload(Property.project)).where(Property.id == pid)
+        select(Property).options(
+            selectinload(Property.branch),
+            selectinload(Property.images)
+        ).where(Property.id == pid)
     )).scalar_one_or_none()
 
 
@@ -83,7 +96,26 @@ async def create_property(session: AsyncSession, data: dict) -> Property:
     if status not in {s.value for s in PropertyStatus}:
         raise ValueError(f"status inválido: {status}")
 
+    # Validate services_included
+    services_included = data.get("services_included", "no_incluye")
+    if services_included not in ("incluye", "no_incluye"):
+        raise ValueError(f"services_included inválido: {services_included}. Válidos: incluye, no_incluye")
+
+    # Validate branch if provided
+    branch_id = data.get("branch_id")
+    if branch_id:
+        branch = await session.get(Branch, uuid_mod.UUID(str(branch_id)))
+        if branch is None:
+            raise ValueError(f"branch_id no encontrado: {branch_id}")
+
     code = data.get("code") or (await _next_code(session))
+    floors, offer_type, offered = validate_floor_offer(
+        data.get("floors"),
+        data.get("floor_offer_type"),
+        data.get("offered_floors"),
+    )
+    if operation == "SALE" and (offer_type != "full_property" or offered):
+        raise ValueError("En venta se ofrece la propiedad completa")
     prop = Property(
         code=code,
         title=data["title"],
@@ -92,18 +124,39 @@ async def create_property(session: AsyncSession, data: dict) -> Property:
         operation=Operation(operation),
         price=float(data["price"]),
         currency=data.get("currency", "COP"),
+        price_period=data.get("price_period", "") or ("month" if operation == "RENT" else ""),
         city=data.get("city", ""),
         neighborhood=data.get("neighborhood", ""),
         address=data.get("address", ""),
+        street=data.get("street", ""),
+        street_number=data.get("street_number", ""),
+        descriptive_location=data.get("descriptive_location", ""),
         latitude=data.get("latitude"),
         longitude=data.get("longitude"),
         area_m2=data.get("area_m2"),
         bedrooms=data.get("bedrooms"),
         bathrooms=data.get("bathrooms"),
         parking_spaces=data.get("parking_spaces"),
+        floors=floors,
+        floor_offer_type=offer_type,
+        offered_floors=offered,
+        has_kitchen=data.get("has_kitchen", True),
+        has_living_room=data.get("has_living_room", True),
+        has_laundry_area=data.get("has_laundry_area", False),
+        # New detailed fields
+        bedrooms_description=data.get("bedrooms_description", ""),
+        bathrooms_description=data.get("bathrooms_description", ""),
+        living_room_description=data.get("living_room_description", ""),
+        laundry_area_description=data.get("laundry_area_description", ""),
+        has_parking=data.get("has_parking", False),
+        parking_description=data.get("parking_description", ""),
+        rent_price=data.get("rent_price"),
+        services_included=services_included,
+        nomenclatura=data.get("nomenclatura", ""),
+        visiting_hours=data.get("visiting_hours", []),
         status=PropertyStatus(status),
         features=data.get("features", []),
-        project_id=data.get("project_id"),
+        branch_id=branch_id,
     )
     session.add(prop)
     await session.flush()
@@ -123,19 +176,58 @@ async def update_property(session: AsyncSession, property_id, data: dict) -> Pro
     if prop is None:
         return None
     allowed = {
-        "title", "description", "price", "currency", "city", "neighborhood", "address",
+        "title", "description", "price", "currency", "price_period", "city", "neighborhood", "address",
+        "street", "street_number", "descriptive_location",
         "latitude", "longitude", "area_m2", "bedrooms", "bathrooms", "parking_spaces",
-        "features", "project_id", "code",
+        "floors", "floor_offer_type", "offered_floors",
+        "has_kitchen", "has_living_room", "has_laundry_area",
+        "features", "branch_id", "code",
+        # New detailed fields
+        "bedrooms_description", "bathrooms_description", "living_room_description",
+        "laundry_area_description", "has_parking", "parking_description",
+        "rent_price", "services_included", "nomenclatura", "visiting_hours",
     }
-    for field_name in allowed:
+    floor_fields = {"floors", "floor_offer_type", "offered_floors"}
+    if floor_fields & set(data.keys()) or data.get("operation") == "SALE":
+        merged_floors = data.get("floors", prop.floors)
+        merged_offer = data.get("floor_offer_type", getattr(prop, "floor_offer_type", None))
+        merged_offered = data.get(
+            "offered_floors", list(getattr(prop, "offered_floors", None) or [])
+        )
+        merged_floors, merged_offer, merged_offered = validate_floor_offer(
+            merged_floors, merged_offer, merged_offered
+        )
+        merged_operation = data.get("operation", None)
+        if merged_operation is None:
+            current_op = getattr(prop, "operation", None)
+            merged_operation = current_op.value if hasattr(current_op, "value") else current_op
+        if merged_operation == "SALE" and (merged_offer != "full_property" or merged_offered):
+            raise ValueError("En venta se ofrece la propiedad completa")
+        prop.floors = merged_floors
+        prop.floor_offer_type = merged_offer
+        prop.offered_floors = merged_offered
+    for field_name in allowed - floor_fields:
         if field_name in data and data[field_name] is not None:
             setattr(prop, field_name, data[field_name])
     if data.get("property_type") in {t.value for t in PropertyType}:
         prop.property_type = PropertyType(data["property_type"])
     if data.get("operation") in {o.value for o in Operation}:
         prop.operation = Operation(data["operation"])
+        # Auto-set price_period for rent
+        if data["operation"] == "RENT" and not prop.price_period:
+            prop.price_period = "month"
     if data.get("status") in {s.value for s in PropertyStatus}:
         prop.status = PropertyStatus(data["status"])
+    # Validate services_included
+    if "services_included" in data and data["services_included"] is not None:
+        if data["services_included"] not in ("incluye", "no_incluye"):
+            raise ValueError(f"services_included inválido: {data['services_included']}. Válidos: incluye, no_incluye")
+        prop.services_included = data["services_included"]
+    # Validate branch if provided
+    if "branch_id" in data and data["branch_id"] is not None:
+        branch = await session.get(Branch, uuid_mod.UUID(str(data["branch_id"])))
+        if branch is None:
+            raise ValueError(f"branch_id no encontrado: {data['branch_id']}")
     await session.flush()
     await sync_property_embedding(session, prop)
     await session.flush()
@@ -236,7 +328,6 @@ async def list_properties_admin(
     operation: str | None = None,
     min_price: float | None = None,
     max_price: float | None = None,
-    project_id: str | None = None,
     limit: int = 12,
     offset: int = 0,
 ) -> tuple[list[Property], int]:
@@ -260,11 +351,6 @@ async def list_properties_admin(
         conds.append(Property.price >= min_price)
     if max_price is not None:
         conds.append(Property.price <= max_price)
-    if project_id:
-        try:
-            conds.append(Property.project_id == uuid_mod.UUID(str(project_id)))
-        except ValueError:
-            return [], 0
     if q and q.strip():
         needle = q.strip()
         conds.append(or_(
@@ -281,4 +367,228 @@ async def list_properties_admin(
     stmt = stmt.order_by(Property.created_at.desc()).limit(min(limit, 200)).offset(offset)
     props = (await session.execute(stmt)).scalars().all()
     return props, total
+
+
+# ----------------------------------------------------------------- property images
+VALID_IMAGE_GROUPS = frozenset({
+    "portada", "piso", "bano", "cocina", "lavadero", "parqueadero",
+    "extra", "general",
+})
+
+
+def normalize_image_group(group: str | None) -> str:
+    """Valida el grupo/característica de una imagen (default 'general')."""
+    g = (group or "general").strip().lower()
+    if g not in VALID_IMAGE_GROUPS:
+        raise ValueError(
+            f"Grupo de imagen inválido: {group}. "
+            f"Válidos: {sorted(VALID_IMAGE_GROUPS)}"
+        )
+    return g
+
+
+async def add_property_image(
+    session: AsyncSession,
+    property_id: uuid.UUID,
+    filename: str,
+    is_cover: bool = False,
+    sort_order: int = 0,
+    alt_text: str = "",
+    file_size: int = 0,
+    mime_type: str = "",
+    name: str = "",
+    description: str = "",
+    group: str | None = None,
+    extra_name: str = "",
+) -> PropertyImage:
+    """Add an image record for a property."""
+    image_group = normalize_image_group(group)
+    if image_group == "extra" and not (extra_name or "").strip():
+        raise ValueError("Las imágenes del grupo 'extra' requieren el nombre del extra (extra_name)")
+    # If this is the cover, unset any existing cover
+    if is_cover:
+        await session.execute(
+            PropertyImage.__table__.update()
+            .where(PropertyImage.property_id == property_id)
+            .values(is_cover=False)
+        )
+    # Determine sort_order if not provided
+    if sort_order == 0:
+        max_order = await session.scalar(
+            select(func.max(PropertyImage.sort_order)).where(PropertyImage.property_id == property_id)
+        )
+        sort_order = (max_order or 0) + 1
+    img = PropertyImage(
+        property_id=property_id,
+        filename=filename,
+        is_cover=is_cover,
+        sort_order=sort_order,
+        alt_text=alt_text,
+        file_size=file_size,
+        mime_type=mime_type,
+        name=name,
+        description=description,
+        group=image_group,
+        extra_name=(extra_name or "").strip()[:200],
+    )
+    session.add(img)
+    await session.flush()
+    return img
+
+
+async def get_property_images(
+    session: AsyncSession,
+    property_id: uuid.UUID,
+    group: str | None = None,
+    extra_name: str | None = None,
+) -> list[PropertyImage]:
+    """Get all images for a property, ordered by cover first then sort_order.
+
+    Filtra opcionalmente por grupo/característica (`group`) y, para el grupo
+    'extra', por nombre del extra (`extra_name`).
+    """
+    stmt = (
+        select(PropertyImage)
+        .where(PropertyImage.property_id == property_id)
+        .order_by(PropertyImage.is_cover.desc(), PropertyImage.sort_order)
+    )
+    if group is not None:
+        stmt = stmt.where(PropertyImage.group == normalize_image_group(group))
+    if extra_name is not None:
+        stmt = stmt.where(PropertyImage.extra_name == extra_name.strip())
+    return list((await session.execute(stmt)).scalars().all())
+
+
+def group_property_images(images: list[PropertyImage]) -> dict[str, list[dict]]:
+    """Agrupa dicts de imágenes por característica para el agente/API."""
+    grouped: dict[str, list[dict]] = {}
+    for img in images:
+        d = img.to_dict() if hasattr(img, "to_dict") else dict(img)
+        key = d.get("extra_name") or "" if d.get("group") == "extra" else None
+        gkey = f"extra:{key}" if key else (d.get("group") or "general")
+        grouped.setdefault(gkey, []).append(d)
+    return grouped
+
+
+async def apply_image_renames(
+    session: AsyncSession, property_id: uuid.UUID, mapping: dict[str, str]
+) -> None:
+    """Sync DB filenames after a disk rename (cover/reorder/delete).
+
+    Without this, rows keep pointing at the old disk names and the images
+    serve 404. Flush is left to the caller (single commit per endpoint).
+    """
+    for old, new in mapping.items():
+        if not old or not new or old == new:
+            continue
+        await session.execute(
+            PropertyImage.__table__.update()
+            .where(PropertyImage.property_id == property_id, PropertyImage.filename == old)
+            .values(filename=new)
+        )
+
+
+async def set_property_cover_image(session: AsyncSession, property_id: uuid.UUID, image_id: uuid.UUID) -> bool:
+    """Set a specific image as the cover for a property."""
+    # Unset all covers
+    await session.execute(
+        PropertyImage.__table__.update()
+        .where(PropertyImage.property_id == property_id)
+        .values(is_cover=False)
+    )
+    # Set new cover
+    result = await session.execute(
+        PropertyImage.__table__.update()
+        .where(PropertyImage.id == image_id, PropertyImage.property_id == property_id)
+        .values(is_cover=True)
+    )
+    return result.rowcount > 0
+
+
+async def reorder_property_images(session: AsyncSession, property_id: uuid.UUID, image_ids: list[uuid.UUID]) -> list[PropertyImage]:
+    """Reorder images by providing a list of image IDs in the desired order."""
+    for i, img_id in enumerate(image_ids):
+        await session.execute(
+            PropertyImage.__table__.update()
+            .where(PropertyImage.id == img_id, PropertyImage.property_id == property_id)
+            .values(sort_order=i, is_cover=(i == 0))
+        )
+    return await get_property_images(session, property_id)
+
+
+async def delete_property_image(session: AsyncSession, property_id: uuid.UUID, image_id: uuid.UUID) -> bool:
+    """Delete a specific image."""
+    result = await session.execute(
+        delete(PropertyImage).where(PropertyImage.id == image_id, PropertyImage.property_id == property_id)
+    )
+    return result.rowcount > 0
+
+
+# ----------------------------------------------------------------- branches
+async def get_branch(session: AsyncSession, branch_id: uuid.UUID) -> Branch | None:
+    """Get a branch by ID."""
+    return await session.get(Branch, branch_id)
+
+
+async def get_branch_by_name(session: AsyncSession, name: str) -> Branch | None:
+    """Get a branch by name."""
+    return (await session.execute(select(Branch).where(Branch.name == name))).scalar_one_or_none()
+
+
+async def list_branches(session: AsyncSession, active_only: bool = True) -> list[Branch]:
+    """List all branches."""
+    stmt = select(Branch).order_by(Branch.name)
+    if active_only:
+        stmt = stmt.where(Branch.is_active == True)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def create_branch(
+    session: AsyncSession,
+    name: str,
+    city: str,
+    neighborhood: str = "",
+    street: str = "",
+    street_number: str = "",
+    descriptive_location: str = "",
+    is_active: bool = True,
+) -> Branch:
+    """Create a new branch."""
+    branch = Branch(
+        name=name,
+        city=city,
+        neighborhood=neighborhood,
+        street=street,
+        street_number=street_number,
+        descriptive_location=descriptive_location,
+        is_active=is_active,
+    )
+    session.add(branch)
+    await session.flush()
+    return branch
+
+
+async def update_branch(session: AsyncSession, branch_id: uuid.UUID, data: dict) -> Branch | None:
+    """Update a branch."""
+    branch = await get_branch(session, branch_id)
+    if branch is None:
+        return None
+    allowed = {"name", "city", "neighborhood", "street", "street_number", "descriptive_location", "is_active"}
+    for field_name in allowed:
+        if field_name in data and data[field_name] is not None:
+            setattr(branch, field_name, data[field_name])
+    await session.flush()
+    return branch
+
+
+# ----------------------------------------------------------------- business hours
+async def get_business_hours_for_branch(
+    session: AsyncSession, branch_id: uuid.UUID | None
+) -> list[BusinessHour]:
+    """Get business hours for a branch (or global if branch_id is None)."""
+    from app.database.models import BusinessHour
+    stmt = select(BusinessHour).where(BusinessHour.branch_id == branch_id).order_by(
+        BusinessHour.weekday, BusinessHour.interval_order
+    )
+    return list((await session.execute(stmt)).scalars().all())
 

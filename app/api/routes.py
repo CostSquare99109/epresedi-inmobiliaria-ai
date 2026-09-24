@@ -1,5 +1,5 @@
 """Internal API: health, inventory CRUD, documents, leads, appointments,
-projects, admin users, business settings, audit log, CSV exports.
+admin users, business settings, audit log, CSV exports.
 
 Admin auth: JWT issued by POST /auth/login (single source of authority).
 Endpoints declare the permission they require via require_permission(...);
@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 
@@ -44,12 +44,12 @@ from app.database.models import (
     Appointment,
     AppointmentStatus,
     AppSetting,
+    Branch,
     Conversation,
     Document,
     Lead,
     LeadStatus,
     Operation,
-    Project,
     Property,
     PropertyStatus,
     PropertyType,
@@ -309,7 +309,6 @@ async def list_properties_admin(
     operation: str | None = None,
     min_price: float | None = None,
     max_price: float | None = None,
-    project_id: str | None = None,
     without_images: bool = False,
     limit: int = 12,
     offset: int = 0,
@@ -319,7 +318,7 @@ async def list_properties_admin(
         props, total = await prop_repo.list_properties_admin(
             session, status=status, city=city, q=q, property_type=property_type,
             operation=operation, min_price=min_price, max_price=max_price,
-            project_id=project_id, limit=limit, offset=offset,
+            limit=limit, offset=offset,
         )
     items = [_with_images(p) for p in props]
     if without_images:
@@ -344,18 +343,66 @@ class PropertyIn(BaseModel):
     operation: str = "SALE"
     description: str = Field(default="", max_length=10000)
     currency: str = Field(default="COP", min_length=3, max_length=3)
+    price_period: str = Field(default="", max_length=20)
     city: str = Field(default="", max_length=80)
     neighborhood: str = Field(default="", max_length=120)
     address: str = Field(default="", max_length=240)
+    street: str = Field(default="", max_length=160)
+    street_number: str = Field(default="", max_length=60)
+    descriptive_location: str = Field(default="", max_length=500)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     area_m2: float | None = Field(default=None, ge=0)
     bedrooms: int | None = Field(default=None, ge=0)
     bathrooms: int | None = Field(default=None, ge=0)
     parking_spaces: int | None = Field(default=None, ge=0)
+    floors: int | None = Field(default=None, ge=1, le=99)
+    floor_offer_type: str = Field(
+        default="full_property",
+        pattern="^(full_property|single_floor|multiple_floors|partial)$",
+    )
+    offered_floors: list[int] = Field(default_factory=list)
+    has_kitchen: bool = True
+    has_living_room: bool = True
+    has_laundry_area: bool = False
+    # New detailed fields
+    bedrooms_description: str = Field(default="", max_length=5000)
+    bathrooms_description: str = Field(default="", max_length=5000)
+    living_room_description: str = Field(default="", max_length=5000)
+    laundry_area_description: str = Field(default="", max_length=5000)
+    has_parking: bool = False
+    parking_description: str = Field(default="", max_length=5000)
+    rent_price: float | None = Field(default=None, ge=0)
+    services_included: str = Field(default="no_incluye", pattern="^(incluye|no_incluye)$")
+    nomenclatura: str = Field(default="", max_length=240)
+    visiting_hours: list[dict] = Field(default_factory=list)
     features: list[str] = Field(default_factory=list)
-    project_id: str | None = None
+    branch_id: str | None = None
     status: str = "AVAILABLE"
+
+    @field_validator("offered_floors", mode="before")
+    @classmethod
+    def _coerce_offered(cls, v: object) -> object:
+        if v is None:
+            return []
+        return v
+
+    @model_validator(mode="after")
+    def _check_floor_offer(self) -> PropertyIn:
+        from app.properties.flooring import validate_floor_offer
+
+        try:
+            floors, offer, offered = validate_floor_offer(
+                self.floors, self.floor_offer_type, self.offered_floors
+            )
+        except ValueError as e:
+            raise ValueError(str(e))
+        if self.operation == "SALE" and (offer != "full_property" or offered):
+            raise ValueError("En venta se ofrece la propiedad completa")
+        self.floors = floors
+        self.floor_offer_type = offer
+        self.offered_floors = offered
+        return self
 
 
 class PropertyPatch(BaseModel):
@@ -363,20 +410,78 @@ class PropertyPatch(BaseModel):
     description: str | None = Field(default=None, max_length=10000)
     price: float | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    price_period: str | None = Field(default=None, max_length=20)
     city: str | None = Field(default=None, max_length=80)
     neighborhood: str | None = Field(default=None, max_length=120)
     address: str | None = Field(default=None, max_length=240)
+    street: str | None = Field(default=None, max_length=160)
+    street_number: str | None = Field(default=None, max_length=60)
+    descriptive_location: str | None = Field(default=None, max_length=500)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     area_m2: float | None = Field(default=None, ge=0)
     bedrooms: int | None = Field(default=None, ge=0)
     bathrooms: int | None = Field(default=None, ge=0)
     parking_spaces: int | None = Field(default=None, ge=0)
+    floors: int | None = Field(default=None, ge=1, le=99)
+    floor_offer_type: str | None = Field(
+        default=None, pattern="^(full_property|single_floor|multiple_floors|partial)$"
+    )
+    offered_floors: list[int] | None = None
+    has_kitchen: bool | None = None
+    has_living_room: bool | None = None
+    has_laundry_area: bool | None = None
+    # New detailed fields
+    bedrooms_description: str | None = Field(default=None, max_length=5000)
+    bathrooms_description: str | None = Field(default=None, max_length=5000)
+    living_room_description: str | None = Field(default=None, max_length=5000)
+    laundry_area_description: str | None = Field(default=None, max_length=5000)
+    has_parking: bool | None = None
+    parking_description: str | None = Field(default=None, max_length=5000)
+    rent_price: float | None = Field(default=None, ge=0)
+    services_included: str | None = Field(default=None, pattern="^(incluye|no_incluye)$")
+    nomenclatura: str | None = Field(default=None, max_length=240)
+    visiting_hours: list[dict] | None = None
     features: list[str] | None = None
     status: str | None = None
     property_type: str | None = None
     operation: str | None = None
-    project_id: str | None = None
+    branch_id: str | None = None
+
+    @model_validator(mode="after")
+    def _check_partial_floor_offer(self) -> PropertyPatch:
+        # Self-consistency of the fields present in this PATCH; the full check
+        # against stored values happens in the repository (merged validation).
+        from app.properties.flooring import FULL_PROPERTY, PARTIAL, SINGLE_FLOOR, normalize_offered_floors
+
+        if self.offered_floors is not None:
+            try:
+                offered = normalize_offered_floors(self.offered_floors)
+            except ValueError as e:
+                raise ValueError(str(e))
+            for n in offered:
+                if n < 1 or n > 99:
+                    raise ValueError(f"Piso ofertado inválido: Piso {n} (debe estar entre 1 y 99)")
+            self.offered_floors = offered
+            if self.floor_offer_type in (FULL_PROPERTY, PARTIAL) and offered:
+                raise ValueError("Propiedad completa no requiere seleccionar pisos individuales")
+            if self.floor_offer_type == SINGLE_FLOOR and len(offered) != 1:
+                raise ValueError("Piso completo requiere seleccionar exactamente un piso")
+            if (
+                self.floor_offer_type is None
+                and self.floors is not None
+                and any(n > self.floors for n in offered)
+            ):
+                raise ValueError(
+                    f"Piso {max(offered)} no existe: la propiedad tiene {self.floors} "
+                    f"{'piso' if self.floors == 1 else 'pisos'}"
+                )
+            if self.operation == "SALE" and (
+                (self.floor_offer_type is not None and self.floor_offer_type != "full_property")
+                or offered
+            ):
+                raise ValueError("En venta se ofrece la propiedad completa")
+        return self
 
 
 @app.post("/properties")
@@ -388,16 +493,9 @@ async def create_property(
     _validate_enum_value(data.operation, Operation, "operation")
     _validate_enum_value(data.status, PropertyStatus, "status")
     async with AsyncSessionLocal() as session:
-        if data.project_id:
-            project = await session.get(Project, _uuid_or_none(data.project_id))
-            if project is None:
-                raise HTTPException(422, "Proyecto no encontrado")
         try:
             prop = await prop_repo.create_property(session, data.model_dump())
             await session.commit()
-            # Load project relationship before session closes
-            if prop.project_id:
-                await session.refresh(prop, attribute_names=["project"])
         except ValueError as e:
             raise HTTPException(422, str(e))
     await _audit(request, user, "property.created", "property", str(prop.id),
@@ -417,17 +515,13 @@ async def patch_property(
     if data.status is not None:
         _validate_enum_value(data.status, PropertyStatus, "status")
     async with AsyncSessionLocal() as session:
-        if data.project_id:
-            project = await session.get(Project, _uuid_or_none(data.project_id))
-            if project is None:
-                raise HTTPException(422, "Proyecto no encontrado")
-        prop = await prop_repo.update_property(session, property_id, data.model_dump(exclude_none=True))
+        try:
+            prop = await prop_repo.update_property(session, property_id, data.model_dump(exclude_none=True))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
         if prop is None:
             raise HTTPException(404, "property not found")
         await session.commit()
-        # Load project relationship before session closes
-        if prop.project_id:
-            await session.refresh(prop, attribute_names=["project"])
     action = "property.status_changed" if data.status is not None else "property.updated"
     await _audit(request, user, action, "property", str(prop.id),
                  metadata={k: (str(v)[:60] if not isinstance(v, list) else v[:10])
@@ -465,26 +559,103 @@ async def upload_image(
     request: Request,
     property_id: str,
     file: UploadFile = File(...),
+    name: str = Form(""),
+    description: str = Form(""),
+    group: str = Form("general"),
+    extra_name: str = Form(""),
     user: AdminUser = Depends(require_permission("properties.images")),
 ):
+    if len(name) > 200:
+        raise HTTPException(422, "El nombre de la imagen no puede exceder 200 caracteres")
+    if len(description) > 5000:
+        raise HTTPException(422, "La descripción de la imagen no puede exceder 5000 caracteres")
+    if len(extra_name) > 200:
+        raise HTTPException(422, "El nombre del extra no puede exceder 200 caracteres")
+    try:
+        image_group = prop_repo.normalize_image_group(group)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if image_group == "extra" and not extra_name.strip():
+        raise HTTPException(422, "Las imágenes de extras personalizadas requieren el nombre del extra")
     data = await file.read()
     max_mb = await bizconfig.get_max_upload_mb()
     async with AsyncSessionLocal() as session:
         prop = await prop_repo.get_property(session, property_id)
         if prop is None:
             raise HTTPException(404, "property not found")
-    try:
-        path = save_property_image(str(prop.id), data, file.filename or "img.jpg", max_mb=max_mb)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+        try:
+            path = save_property_image(
+                str(prop.id), data, file.filename or "img.jpg",
+                max_mb=max_mb, preferred_name=name or None,
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        filename = path.rsplit("/", 1)[-1]
+        file_size = len(data)
+        mime_type = file.content_type or ""
+        # Determine if this is the first image (cover)
+        existing_images = list_property_images(str(prop.id))
+        is_cover = len(existing_images) == 1  # only the newly added one exists
+        sort_order = len(existing_images) - 1 if existing_images else 0
+        # Create PropertyImage record in DB (valida grupo/extra_name)
+        try:
+            img = await prop_repo.add_property_image(
+                session,
+                prop.id,
+                filename,
+                is_cover=is_cover,
+                sort_order=sort_order,
+                alt_text=name or filename,
+                file_size=file_size,
+                mime_type=mime_type,
+                name=name,
+                description=description,
+                group=image_group,
+                extra_name=extra_name,
+            )
+        except ValueError as e:
+            # Compensación: la propiedad existe pero la imagen falló -> no
+            # dejar el archivo huérfano en disco.
+            try:
+                delete_property_image(str(prop.id), filename)
+            except ValueError:
+                pass
+            raise HTTPException(422, str(e))
+        await session.commit()
+        await session.refresh(img)
     await _audit(request, user, "property.image_uploaded", "property", str(prop.id),
-                 metadata={"filename": path.rsplit("/", 1)[-1], "bytes": len(data)})
-    return {"saved": path.rsplit("/", 1)[-1], "images": list_property_images(str(prop.id))}
+                 metadata={"filename": filename, "bytes": file_size, "name": name,
+                           "description": description, "group": image_group,
+                           "extra_name": extra_name})
+    return {"saved": filename, "images": list_property_images(str(prop.id)), "image": img.to_dict()}
 
 
 @app.get("/properties/{property_id}/images")
-async def list_images(property_id: str):
-    return {"images": list_property_images(property_id)}
+async def list_images(property_id: str, group: str | None = None):
+    """Lista nombres de archivo (compat) + metadata completa por imagen.
+
+    `group` filtra opcionalmente por característica (portada, piso, bano,
+    cocina, lavadero, parqueadero, extra, general).
+    """
+    filenames = list_property_images(property_id)
+    items: list[dict] = []
+    image_group: str | None = None
+    if group is not None:
+        try:
+            image_group = prop_repo.normalize_image_group(group)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+    async with AsyncSessionLocal() as session:
+        try:
+            prop = await prop_repo.get_property(session, property_id)
+        except Exception:
+            prop = None
+        if prop is not None:
+            for img in await prop_repo.get_property_images(
+                session, prop.id, group=image_group
+            ):
+                items.append(img.to_dict())
+    return {"images": filenames, "items": items}
 
 
 @app.get("/properties/{property_id}/images/{filename}")
@@ -504,10 +675,26 @@ async def remove_image(
         prop = await prop_repo.get_property(session, property_id)
         if prop is None:
             raise HTTPException(404, "property not found")
-    try:
-        images = delete_property_image(property_id, filename)
-    except ValueError as e:
-        raise HTTPException(404, str(e))
+        # Delete from database
+        from app.database.models import PropertyImage
+        from sqlalchemy import delete as sa_delete
+        result = await session.execute(
+            sa_delete(PropertyImage).where(
+                PropertyImage.property_id == prop.id,
+                PropertyImage.filename == filename
+            )
+        )
+        if result.rowcount == 0:
+            raise HTTPException(404, "Imagen no encontrada en base de datos")
+        try:
+            images, renames = delete_property_image(property_id, filename)
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(404, str(e))
+        # El disco puede haber promovido otra foto a portada (nuevo nombre):
+        # sincronizar la BD antes del commit para no servir 404.
+        await prop_repo.apply_image_renames(session, prop.id, renames)
+        await session.commit()
     await _audit(request, user, "property.image_deleted", "property", str(prop.id),
                  metadata={"filename": filename})
     return {"deleted": True, "images": images}
@@ -515,23 +702,44 @@ async def remove_image(
 
 @app.post("/properties/{property_id}/images/reorder")
 async def reorder_images(
-    property_id: str, order: list[str], request: Request,
+    property_id: str, request: Request,
     user: AdminUser = Depends(require_permission("properties.images")),
 ):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(422, "Cuerpo inválido: se esperaba una lista de filenames")
+    # Acepta lista directa ["a.jpg", ...] o {"filenames"|"order": [...]}
+    order = body if isinstance(body, list) else body.get("filenames", body.get("order"))
+    if not isinstance(order, list) or not all(isinstance(f, str) for f in order):
+        raise HTTPException(422, "Cuerpo inválido: se esperaba una lista de filenames")
     async with AsyncSessionLocal() as session:
         prop = await prop_repo.get_property(session, property_id)
         if prop is None:
             raise HTTPException(404, "property not found")
-    try:
-        images = reorder_property_images(property_id, order)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+        # El disco renombra TODOS los archivos (cover/001/...): operar primero
+        # en disco y luego sincronizar nombres + orden en la BD en un commit.
+        from app.database.models import PropertyImage
+        try:
+            images, renames = reorder_property_images(property_id, order)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        await prop_repo.apply_image_renames(session, prop.id, renames)
+        # Orden y portada según el disco (images[0] es la portada).
+        for i, new_name in enumerate(images):
+            await session.execute(
+                PropertyImage.__table__.update()
+                .where(PropertyImage.property_id == prop.id, PropertyImage.filename == new_name)
+                .values(sort_order=i, is_cover=(i == 0))
+            )
+        await session.commit()
     await _audit(request, user, "property.image_reorder", "property", str(prop.id),
                  metadata={"order": images[:20]})
     return {"images": images}
 
 
 @app.post("/properties/{property_id}/images/{filename}/cover")
+@app.patch("/properties/{property_id}/images/{filename}/cover")
 async def make_cover(
     property_id: str, filename: str, request: Request,
     user: AdminUser = Depends(require_permission("properties.images")),
@@ -540,13 +748,124 @@ async def make_cover(
         prop = await prop_repo.get_property(session, property_id)
         if prop is None:
             raise HTTPException(404, "property not found")
-    try:
-        images = set_property_cover(property_id, filename)
-    except ValueError as e:
-        raise HTTPException(404, str(e))
+        # Verificar que la fila existe antes de tocar el disco.
+        from app.database.models import PropertyImage
+        row = (await session.execute(
+            select(PropertyImage).where(
+                PropertyImage.property_id == prop.id,
+                PropertyImage.filename == filename,
+            )
+        )).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(404, "Imagen no encontrada en base de datos")
+        try:
+            images, renames = set_property_cover(property_id, filename)
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+        # El disco renombra a cover.ext: sincronizar la BD o se sirve 404.
+        await prop_repo.apply_image_renames(session, prop.id, renames)
+        new_cover = renames.get(filename, filename)
+        await session.execute(
+            PropertyImage.__table__.update()
+            .where(PropertyImage.property_id == prop.id)
+            .values(is_cover=False)
+        )
+        await session.execute(
+            PropertyImage.__table__.update()
+            .where(PropertyImage.property_id == prop.id, PropertyImage.filename == new_cover)
+            .values(is_cover=True)
+        )
+        await session.commit()
     await _audit(request, user, "property.cover_changed", "property", str(prop.id),
                  metadata={"cover": images[0] if images else None})
     return {"images": images}
+
+
+@app.patch("/properties/{property_id}/images/{filename}")
+async def update_image_metadata(
+    property_id: str, filename: str, request: Request,
+    user: AdminUser = Depends(require_permission("properties.images")),
+):
+    """Actualiza nombre/descripción/grupo de una imagen.
+
+    Acepta JSON ({"name", "description", "group", "extra_name"}) o formulario.
+    Los campos omitidos conservan su valor (no se borran).
+    """
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(422, "Cuerpo JSON inválido")
+        if not isinstance(payload, dict):
+            raise HTTPException(422, "Cuerpo JSON inválido")
+        name = payload.get("name")
+        description = payload.get("description")
+        group = payload.get("group")
+        extra_name = payload.get("extra_name")
+    else:
+        form = await request.form()
+        name = form.get("name") if "name" in form else None
+        description = form.get("description") if "description" in form else None
+        group = form.get("group") if "group" in form else None
+        extra_name = form.get("extra_name") if "extra_name" in form else None
+    values: dict = {}
+    if name is not None:
+        if len(str(name)) > 200:
+            raise HTTPException(422, "El nombre de la imagen no puede exceder 200 caracteres")
+        values["name"] = str(name)
+    if description is not None:
+        if len(str(description)) > 5000:
+            raise HTTPException(422, "La descripción de la imagen no puede exceder 5000 caracteres")
+        values["description"] = str(description)
+    if group is not None:
+        try:
+            values["group"] = prop_repo.normalize_image_group(str(group))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+    if extra_name is not None:
+        if len(str(extra_name)) > 200:
+            raise HTTPException(422, "El nombre del extra no puede exceder 200 caracteres")
+        values["extra_name"] = str(extra_name).strip()
+    if not values:
+        raise HTTPException(422, "Nada que actualizar")
+    async with AsyncSessionLocal() as session:
+        prop = await prop_repo.get_property(session, property_id)
+        if prop is None:
+            raise HTTPException(404, "property not found")
+        from app.database.models import PropertyImage
+        current = (await session.execute(
+            select(PropertyImage).where(
+                PropertyImage.property_id == prop.id,
+                PropertyImage.filename == filename
+            )
+        )).scalar_one_or_none()
+        if current is None:
+            raise HTTPException(404, "Imagen no encontrada en base de datos")
+        final_group = values.get("group", current.group)
+        final_extra = values.get("extra_name", current.extra_name)
+        if final_group == "extra" and not (final_extra or "").strip():
+            raise HTTPException(422, "Las imágenes del grupo 'extra' requieren el nombre del extra")
+        await session.execute(
+            PropertyImage.__table__.update()
+            .where(PropertyImage.property_id == prop.id, PropertyImage.filename == filename)
+            .values(**values)
+        )
+        await session.commit()
+        # Fetch updated image (la sesión usa expire_on_commit=False: el UPDATE
+        # por Core no refresca el identity map, hay que expirar explícitamente
+        # para no devolver metadata obsoleta).
+        img = (await session.execute(
+            select(PropertyImage).where(
+                PropertyImage.property_id == prop.id,
+                PropertyImage.filename == filename
+            )
+        )).scalar_one_or_none()
+        if img is not None:
+            await session.refresh(img)
+    await _audit(request, user, "property.image_metadata_updated", "property", str(prop.id),
+                 metadata={"filename": filename, **{k: str(v)[:120] for k, v in values.items()}})
+    return {"image": img.to_dict() if img else None}
 
 
 @app.get("/properties/{property_id}/slots")
@@ -885,118 +1204,107 @@ async def cancel_appointment(
     await _audit(request, user, "appointment.cancelled", "appointment", appointment_id)
     return {"cancelled": True}
 
-# ------------------------------------------------------------------ projects
-def _project_dict(p: Project, property_count: int | None = None) -> dict:
-    out = {
-        "id": str(p.id), "name": p.name, "description": p.description, "city": p.city,
-        "created_at": p.created_at.isoformat(), "updated_at": p.updated_at.isoformat(),
-    }
-    if property_count is not None:
-        out["property_count"] = property_count
-    return out
+# ------------------------------------------------------------------ branches (sedes)
+def _branch_dict(b: Branch) -> dict:
+    return b.to_dict()
 
 
-@app.get("/projects")
-async def list_projects():
-    async with AsyncSessionLocal() as session:
-        rows = (await session.execute(
-            select(Project, func.count(Property.id))
-            .outerjoin(Property, Property.project_id == Project.id)
-            .group_by(Project.id).order_by(Project.created_at.desc())
-        )).all()
-    return {"count": len(rows), "projects": [_project_dict(p, int(n)) for p, n in rows]}
-
-
-@app.get("/projects/{project_id}")
-async def get_project(project_id: str):
-    async with AsyncSessionLocal() as session:
-        project = await session.get(Project, _uuid_or_none(project_id))
-        if project is None:
-            raise HTTPException(404, "project not found")
-        n = (await session.execute(
-            select(func.count()).select_from(Property).where(Property.project_id == project.id)
-        )).scalar() or 0
-    return _project_dict(project, int(n))
-
-
-class ProjectIn(BaseModel):
+class BranchIn(BaseModel):
     name: str = Field(max_length=160)
-    description: str = Field(default="", max_length=5000)
-    city: str = Field(default="", max_length=80)
+    city: str = Field(max_length=80)
+    neighborhood: str = Field(default="", max_length=120)
+    street: str = Field(default="", max_length=160)
+    street_number: str = Field(default="", max_length=60)
+    descriptive_location: str = Field(default="", max_length=500)
+    is_active: bool = True
 
 
-@app.post("/projects")
-async def create_project(
-    data: ProjectIn, request: Request,
-    user: AdminUser = Depends(require_permission("projects.create")),
+class BranchPatch(BaseModel):
+    name: str | None = Field(default=None, max_length=160)
+    city: str | None = Field(default=None, max_length=80)
+    neighborhood: str | None = Field(default=None, max_length=120)
+    street: str | None = Field(default=None, max_length=160)
+    street_number: str | None = Field(default=None, max_length=60)
+    descriptive_location: str | None = Field(default=None, max_length=500)
+    is_active: bool | None = None
+
+
+@app.get("/branches")
+async def list_branches(
+    active_only: bool = True,
+    user: AdminUser = Depends(require_permission("properties.read")),
+):
+    async with AsyncSessionLocal() as session:
+        branches = await prop_repo.list_branches(session, active_only=active_only)
+    return {"count": len(branches), "branches": [_branch_dict(b) for b in branches]}
+
+
+@app.get("/branches/{branch_id}")
+async def get_branch(
+    branch_id: str,
+    user: AdminUser = Depends(require_permission("properties.read")),
+):
+    async with AsyncSessionLocal() as session:
+        branch = await prop_repo.get_branch(session, _uuid_or_none(branch_id))
+        if branch is None:
+            raise HTTPException(404, "branch not found")
+    return _branch_dict(branch)
+
+
+@app.post("/branches")
+async def create_branch(
+    data: BranchIn, request: Request,
+    user: AdminUser = Depends(require_permission("properties.create")),
 ):
     async with AsyncSessionLocal() as session:
         exists = (await session.execute(
-            select(Project).where(Project.name == data.name.strip())
+            select(Branch).where(Branch.name == data.name.strip())
         )).scalar_one_or_none()
         if exists is not None:
-            raise HTTPException(409, f"Ya existe un proyecto llamado «{data.name.strip()}»")
-        project = Project(name=data.name.strip(), description=data.description, city=data.city)
-        session.add(project)
+            raise HTTPException(409, f"Ya existe una sede llamada «{data.name.strip()}»")
+        branch = await prop_repo.create_branch(
+            session, data.name.strip(), data.city, data.neighborhood,
+            data.street, data.street_number, data.descriptive_location, data.is_active
+        )
         await session.commit()
-        await session.refresh(project)
-    await _audit(request, user, "project.created", "project", str(project.id),
-                 metadata={"name": project.name})
-    return _project_dict(project, 0)
+    await _audit(request, user, "branch.created", "branch", str(branch.id),
+                 metadata={"name": branch.name})
+    return _branch_dict(branch)
 
 
-class ProjectPatch(BaseModel):
-    name: str | None = Field(default=None, max_length=160)
-    description: str | None = Field(default=None, max_length=5000)
-    city: str | None = Field(default=None, max_length=80)
-
-
-@app.patch("/projects/{project_id}")
-async def patch_project(
-    project_id: str, data: ProjectPatch, request: Request,
-    user: AdminUser = Depends(require_permission("projects.update")),
+@app.patch("/branches/{branch_id}")
+async def patch_branch(
+    branch_id: str, data: BranchPatch, request: Request,
+    user: AdminUser = Depends(require_permission("properties.update")),
 ):
     async with AsyncSessionLocal() as session:
-        project = await session.get(Project, _uuid_or_none(project_id))
-        if project is None:
-            raise HTTPException(404, "project not found")
+        branch = await prop_repo.update_branch(session, _uuid_or_none(branch_id), data.model_dump(exclude_none=True))
+        if branch is None:
+            raise HTTPException(404, "branch not found")
         if data.name is not None:
-            name = data.name.strip()
             exists = (await session.execute(
-                select(Project).where(Project.name == name, Project.id != project.id)
+                select(Branch).where(Branch.name == data.name.strip(), Branch.id != branch.id)
             )).scalar_one_or_none()
             if exists is not None:
-                raise HTTPException(409, f"Ya existe un proyecto llamado «{name}»")
-            project.name = name
-        if data.description is not None:
-            project.description = data.description
-        if data.city is not None:
-            project.city = data.city
+                raise HTTPException(409, f"Ya existe una sede llamada «{data.name.strip()}»")
         await session.commit()
-    await _audit(request, user, "project.updated", "project", str(project.id),
+    await _audit(request, user, "branch.updated", "branch", str(branch.id),
                  metadata={k: str(v)[:60] for k, v in data.model_dump(exclude_none=True).items()})
-    return _project_dict(project)
+    return _branch_dict(branch)
 
 
-@app.delete("/projects/{project_id}")
-async def delete_project(
-    project_id: str, request: Request,
-    user: AdminUser = Depends(require_permission("projects.delete")),
+@app.get("/branches/{branch_id}/business-hours")
+async def get_branch_business_hours(
+    branch_id: str,
+    user: AdminUser = Depends(require_permission("properties.read")),
 ):
     async with AsyncSessionLocal() as session:
-        project = await session.get(Project, _uuid_or_none(project_id))
-        if project is None:
-            raise HTTPException(404, "project not found")
-        n = (await session.execute(
-            select(func.count()).select_from(Property).where(Property.project_id == project.id)
-        )).scalar() or 0
-        if n > 0:
-            raise HTTPException(409, f"El proyecto tiene {n} propiedad(es) asignadas. Desasígnalas antes de eliminarlo.")
-        await session.delete(project)
-        await session.commit()
-    await _audit(request, user, "project.deleted", "project", project_id,
-                 metadata={"name": project.name})
-    return {"deleted": True}
+        branch = await prop_repo.get_branch(session, _uuid_or_none(branch_id))
+        if branch is None:
+            raise HTTPException(404, "branch not found")
+        hours = await prop_repo.get_business_hours_for_branch(session, branch.id)
+    return {"branch_id": branch_id, "hours": [h.to_dict() for h in hours]}
+
 
 # ------------------------------------------------------------------ admin users
 @app.get("/admin-users")
@@ -1365,7 +1673,6 @@ async def export_properties_csv(
         "banos": p.bathrooms if p.bathrooms is not None else "",
         "parqueaderos": p.parking_spaces if p.parking_spaces is not None else "",
         "estado": p.status.value, "caracteristicas": "; ".join(p.features or []),
-        "proyecto": p.project.name if p.project else "",
         "creado": p.created_at.isoformat(), "actualizado": p.updated_at.isoformat(),
     } for p in props]
     return _csv_response(rows, list(rows[0].keys()) if rows else ["code"], "propiedades.csv")

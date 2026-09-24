@@ -12,7 +12,7 @@ from app.database.models import PropertyStatus, PropertyType
 from app.properties import repository as repo
 
 EXPECTED_TABLES = {
-    "properties", "projects", "documents", "document_chunks", "users",
+    "properties", "documents", "document_chunks", "users",
     "user_preferences", "conversations", "messages", "ai_events",
     "favorites", "saved_searches", "leads", "appointments", "alembic_version",
 }

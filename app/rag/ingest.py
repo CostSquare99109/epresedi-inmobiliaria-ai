@@ -60,7 +60,6 @@ async def save_document(
     title: str = "",
     document_type: str = "general",
     property_id: uuid_mod.UUID | None = None,
-    project_id: uuid_mod.UUID | None = None,
 ) -> tuple[Document, bool]:
     """Stores a document. Returns (document, changed).
 
@@ -105,8 +104,6 @@ async def save_document(
         existing_by_name.document_type = document_type
         if property_id:
             existing_by_name.property_id = property_id
-        if project_id:
-            existing_by_name.project_id = project_id
         existing_by_name.version += 1
         existing_by_name.status = DocumentStatus.PENDING
         existing_by_name.error = ""
@@ -127,7 +124,6 @@ async def save_document(
         size_bytes=len(data),
         document_type=document_type,
         property_id=property_id,
-        project_id=project_id,
         status=DocumentStatus.PENDING,
     )
     session.add(doc)
@@ -175,7 +171,6 @@ async def process_document(session: AsyncSession, document_id: uuid_mod.UUID) ->
                 DocumentChunk(
                     document_id=doc.id,
                     property_id=doc.property_id,
-                    project_id=doc.project_id,
                     document_type=doc.document_type,
                     filename=doc.filename,
                     page=chunk.page,

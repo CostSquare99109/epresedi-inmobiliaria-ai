@@ -129,22 +129,37 @@ async def _job_notify(payload: dict) -> dict:
                     parse_mode="Markdown",
                 )
                 
-                # Send images if available
-                from app.api.files import list_property_images, property_images_dir
+                # Send images if available (solo archivos reales y verificados)
+                from app.api.files import image_path_or_none, list_property_images
                 try:
                     filenames = list_property_images(str(property_obj.id))
                     if filenames:
-                        base = property_images_dir(str(property_obj.id))
+                        sent_photos = 0
                         for fname in filenames[:3]:  # Limit to 3 images
+                            resolved = image_path_or_none(str(property_obj.id), fname)
+                            if resolved is None:
+                                log.warning(
+                                    "telegram_photo_send status=filtered property=%s file=%s",
+                                    property_obj.id, fname,
+                                )
+                                continue
                             try:
-                                with open(base / fname, "rb") as fh:
+                                if resolved.stat().st_size == 0:
+                                    continue
+                                with open(resolved, "rb") as fh:
                                     await bot.send_photo(
                                         chat_id=alert.telegram_chat_id or alert.telegram_user_id,
                                         photo=fh,
                                         disable_notification=True,
                                     )
+                                sent_photos += 1
                             except Exception as e:
                                 log.warning("send_photo_failed property=%s error=%s", property_obj.id, e)
+                        log.info(
+                            "telegram_photo_send status=%s property=%s sent=%s",
+                            "success" if sent_photos else "none",
+                            property_obj.id, sent_photos,
+                        )
                 except Exception as e:
                     log.warning("image_send_failed property=%s error=%s", property_obj.id, e)
                 

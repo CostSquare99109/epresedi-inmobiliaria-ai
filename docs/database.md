@@ -2,12 +2,11 @@
 
 PostgreSQL + pgvector, todo local. Esquema gestionado por Alembic (`migrations/versions/`).
 
-## Esquema (14 tablas)
+## Esquema (13 tablas)
 
 | Tabla | Propósito |
 |---|---|
 | `properties` | Inventario (código único, tipo, operación, precio, ubicación, estado, features JSONB) |
-| `projects` | Proyectos inmobiliarios |
 | `documents` | Documentos RAG (hash único, versión, estado, embedding_version) |
 | `document_chunks` | Chunks con embedding vector(256), página, sección, hash |
 | `users` | Usuarios de Telegram (id = telegram_user_id) |

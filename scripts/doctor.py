@@ -45,7 +45,6 @@ def check_postgres() -> bool:
         return True
     except Exception as e:
         _err("PostgreSQL", str(e)[:120],
-             "docker compose up -d postgres · o Termux: initdb -D ~/pgdata-inmob && "
              "pg_ctl -D ~/pgdata-inmob start · revisa DATABASE_URL en .env")
         return False
 
@@ -57,7 +56,7 @@ def check_pgvector() -> bool:
             _ok("pgvector", version)
             return True
         _err("pgvector", "extensión no instalada",
-             "CREATE EXTENSION vector; (compila pgvector o usa la imagen docker pgvector/pgvector)")
+             "CREATE EXTENSION vector; (compila pgvector; ver docs/local-development.md)")
         return False
     except Exception as e:
         _err("pgvector", str(e)[:120], "verifica PostgreSQL primero")
@@ -87,7 +86,7 @@ async def check_redis() -> None:
             _ok("Redis")
         else:
             _err("Redis", "no responde PING",
-                 "docker compose up -d redis · o Termux: pkg install redis && redis-server --daemonize yes "
+                 "redis-server --daemonize yes --port 6379 "
                  "· (sin Redis la app usa cola en memoria: funcional pero no recomendado)")
     except Exception as e:
         _err("Redis", str(e)[:120], "instala/arranca Redis")

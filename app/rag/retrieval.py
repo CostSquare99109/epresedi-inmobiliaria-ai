@@ -34,7 +34,6 @@ async def retrieve_chunks(
     query: str,
     k: int = RETRIEVAL_TOP_K,
     property_id: uuid_mod.UUID | None = None,
-    project_id: uuid_mod.UUID | None = None,
     document_type: str | None = None,
 ) -> list[RetrievedChunk]:
     """Returns the top-k document chunks for a query, merging:
@@ -51,9 +50,6 @@ async def retrieve_chunks(
     if property_id:
         conds.append("c.property_id = :prop")
         params["prop"] = property_id
-    if project_id:
-        conds.append("c.project_id = :proj")
-        params["proj"] = project_id
     if document_type:
         conds.append("c.document_type = :dtype")
         params["dtype"] = document_type

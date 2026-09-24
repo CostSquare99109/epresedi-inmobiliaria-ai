@@ -441,7 +441,7 @@ async def test_current_datetime_injected_in_system_prompt(session, user_id):
 async def test_send_response_rejected_if_claims_images_but_empty_array(session, user_id):
     """BUG-1: Si el LLM dice que envía imágenes pero images=[] → runtime rechaza send_response."""
     from app.agents.orchestrator import Orchestrator
-    from tests.test_fake_llm_v2 import FakeLLMV2, send_response_round, plain_text
+    from tests.test_fake_llm_v2 import FakeLLMV2, plain_text, send_response_round
 
     # El LLM intenta enviar send_response con texto que dice "adjunto las imágenes"
     # pero sin array images[] → debe ser rechazado
@@ -452,9 +452,9 @@ async def test_send_response_rejected_if_claims_images_but_empty_array(session, 
         n = call_count["n"]
 
         if n == 1:
-            # Primer intento: afirma enviar imágenes pero sin images[]
+            # Primer intento: afirma enviar imágenes (singular) pero sin images[]
             return send_response_round(
-                "Aquí tienes las fotos de la propiedad, se adjuntan las imágenes para que las veas.",
+                "Aquí tienes una imagen de la casa (PROP-0009):",
                 intent="PROPERTY_IMAGES",
                 call_id="send1"
             )
@@ -478,7 +478,7 @@ async def test_send_response_rejected_if_claims_images_but_empty_array(session, 
     reply = await orch.handle_user_message(session, user_id, "muéstrame fotos de PROP-0001", "t", "T")
 
     # La respuesta final NO debe contener la alucinación de imágenes
-    assert "se adjuntan las imágenes" not in reply.text
+    assert "Aquí tienes una imagen de la casa" not in reply.text
     assert "adjunto las imágenes" not in reply.text
     # Debe haber habido 2 llamadas al LLM (intento fallido + corrección)
     assert len(fake.calls) == 2
@@ -491,11 +491,11 @@ async def test_send_response_rejected_if_claims_images_but_empty_array(session, 
 async def test_appointment_status_requested_not_called_confirmed(session, user_id):
     """BUG-5: schedule_visit devuelve REQUESTED → LLM no debe decir 'confirmada'."""
     from app.agents.orchestrator import Orchestrator
-    from tests.test_fake_llm_v2 import FakeLLMV2, send_response_round, tc, tool_round
-    from app.memory import service as memory_service
-    from app.properties import repository as prop_repo
     from app.appointments import service as appt_service
     from app.crm import service as crm_service
+    from app.memory import service as memory_service
+    from app.properties import repository as prop_repo
+    from tests.test_fake_llm_v2 import FakeLLMV2, send_response_round, tc, tool_round
 
     # Setup: crear propiedad, usuario, lead, y slot disponible
     await memory_service.get_or_create_user(session, user_id, "test", "Test")
@@ -537,7 +537,7 @@ async def test_appointment_status_requested_not_called_confirmed(session, user_i
                     if env.get("tool") == "schedule_visit" and env.get("ok"):
                         sv_result = env
                         break
-                except:
+                except (json.JSONDecodeError, TypeError):
                     pass
 
             if sv_result:
@@ -627,13 +627,14 @@ async def test_no_seller_notification_promise(session, user_id):
 # ─────────────────────────────────────────────────────────── BUG-3: silent error recovery
 async def test_silent_retry_after_tool_error_narrates_correction(session, user_id):
     """BUG-3: Si schedule_visit falla y luego tiene éxito, el LLM debe narrar qué corrigió."""
+    import json
+
     from app.agents.orchestrator import Orchestrator
-    from tests.test_fake_llm_v2 import FakeLLMV2, send_response_round, tc, tool_round
-    from app.memory import service as memory_service
-    from app.properties import repository as prop_repo
     from app.appointments import service as appt_service
     from app.crm import service as crm_service
-    import json
+    from app.memory import service as memory_service
+    from app.properties import repository as prop_repo
+    from tests.test_fake_llm_v2 import FakeLLMV2, send_response_round, tc, tool_round
 
     # Setup
     await memory_service.get_or_create_user(session, user_id, "test", "Test")
@@ -692,7 +693,7 @@ async def test_silent_retry_after_tool_error_narrates_correction(session, user_i
                     if env.get("tool") == "schedule_visit" and env.get("ok"):
                         sv_ok = env
                         break
-                except:
+                except (json.JSONDecodeError, TypeError):
                     pass
 
             if sv_ok:

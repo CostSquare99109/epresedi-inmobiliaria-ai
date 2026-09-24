@@ -136,6 +136,49 @@ def _sanitize_reply_text(text: str | None) -> str:
     return text.strip()
 
 
+_ALLOWED_PHOTO_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _verified_photo_paths(paths: list[str]) -> tuple[list[str], int]:
+    """Filtra a archivos reales enviables (existe, no vacío, extensión válida).
+
+    Devuelve (verificados, descartados). Nunca expone detalles internos al
+    usuario: el conteo solo alimenta logs.
+    """
+    from pathlib import Path
+
+    verified: list[str] = []
+    dropped = 0
+    for p in paths or []:
+        try:
+            fp = Path(p)
+            if fp.suffix.lower() not in _ALLOWED_PHOTO_EXT:
+                dropped += 1
+                continue
+            if not fp.is_file() or fp.stat().st_size == 0:
+                dropped += 1
+                continue
+            verified.append(p)
+        except OSError:
+            dropped += 1
+    return verified, dropped
+
+
+async def _send_verified_photos(message, paths: list[str]) -> tuple[int, int]:
+    """Envía fotos verificadas con reply_photo. Devuelve (enviadas, fallidas)."""
+    sent = 0
+    failed = 0
+    for path in paths[:10]:
+        try:
+            with open(path, "rb") as fh:
+                await message.reply_photo(photo=fh)
+            sent += 1
+        except Exception as e:
+            failed += 1
+            log.warning("send_photo_failed path=%s error=%s", path, e)
+    return sent, failed
+
+
 async def _reply_with(update: Update, reply: AgentReply) -> None:
     # Safety: never send empty text to Telegram
     safe_text = _sanitize_reply_text(reply.text)
@@ -145,9 +188,29 @@ async def _reply_with(update: Update, reply: AgentReply) -> None:
 
     keyboard = build_keyboard(reply.actions)
     message = update.effective_message
+    chat_id = getattr(update.effective_chat, "id", "?")
     if reply.images:
         from telegram.helpers import escape_markdown
 
+        verified, dropped = _verified_photo_paths(list(reply.images))
+        if dropped:
+            log.warning(
+                "telegram_photo_send status=filtered chat_id=%s requested=%s verified=%s dropped=%s",
+                chat_id, len(reply.images), len(verified), dropped,
+            )
+        if not verified:
+            # Nada utilizable en disco: no afirmar un envío. Respuesta honesta
+            # y visible en vez del texto original que prometía fotos.
+            log.warning(
+                "telegram_photo_send status=failed reason=file_missing chat_id=%s requested=%s",
+                chat_id, len(reply.images),
+            )
+            honest = (
+                "En este momento no pude adjuntar las fotografías de esa propiedad. "
+                "¿Te comparto los detalles o te ayudo a agendar una visita?"
+            )
+            await _send_text(message, honest, reply_markup=keyboard)
+            return
         try:
             await _send_text(
                 message, escape_markdown(reply.text, version=2), parse_mode=ParseMode.MARKDOWN_V2
@@ -158,12 +221,23 @@ async def _reply_with(update: Update, reply: AgentReply) -> None:
                 await message.reply_text(reply.text)
             except Exception:
                 log.exception("reply_text_failed with_images plain")
-        for path in reply.images[:10]:
+        sent, failed = await _send_verified_photos(update.effective_message, verified)
+        log.info(
+            "telegram_photo_send status=%s chat_id=%s requested=%s sent=%s failed=%s",
+            "success" if failed == 0 else ("partial" if sent else "failed"),
+            chat_id, len(verified), sent, failed,
+        )
+        if failed and sent == 0:
+            # Telegram rechazó el envío (no es archivo faltante: ya se verificó).
+            # No dejar al usuario con un "aquí tienes" sin foto: aviso visible,
+            # detalles técnicos solo en logs.
             try:
-                with open(path, "rb") as fh:
-                    await update.effective_message.reply_photo(photo=fh)
-            except Exception as e:
-                log.warning("send_photo_failed path=%s error=%s", path, e)
+                await message.reply_text(
+                    "⚠️ No pude enviar las fotos por un problema técnico. "
+                    "Intenta de nuevo en unos segundos."
+                )
+            except Exception:
+                log.exception("photo_failure_notice_failed")
         return
     log.debug("reply_keyboard buttons=%d", 0 if keyboard is None else len(keyboard.inline_keyboard))
     await _send_text(message, reply.text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
@@ -394,14 +468,39 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         log.warning("callback_reply_text_was_empty replaced_with_safe_fallback")
 
     if reply.images:
-        for path in reply.images[:10]:
-            try:
-                with open(path, "rb") as fh:
-                    await query.message.reply_photo(photo=fh)
-            except Exception as e:
-                log.warning("send_photo_failed path=%s error=%s", path, e)
+        verified, dropped = _verified_photo_paths(list(reply.images))
+        chat_id_cb = getattr(update.effective_chat, "id", "?")
+        if dropped:
+            log.warning(
+                "telegram_photo_send status=filtered chat_id=%s requested=%s verified=%s dropped=%s",
+                chat_id_cb, len(reply.images), len(verified), dropped,
+            )
+        if not verified:
+            log.warning(
+                "telegram_photo_send status=failed reason=file_missing chat_id=%s requested=%s",
+                chat_id_cb, len(reply.images),
+            )
+            await query.message.reply_text(
+                "En este momento no pude adjuntar las fotografías de esa propiedad. "
+                "¿Te comparto los detalles o te ayudo a agendar una visita?"
+            )
+            return
+        sent, failed = await _send_verified_photos(query.message, verified)
+        log.info(
+            "telegram_photo_send status=%s chat_id=%s requested=%s sent=%s failed=%s",
+            "success" if failed == 0 else ("partial" if sent else "failed"),
+            chat_id_cb, len(verified), sent, failed,
+        )
         if reply.text:
             await query.message.reply_text(reply.text)
+        if failed and sent == 0:
+            try:
+                await query.message.reply_text(
+                    "⚠️ No pude enviar las fotos por un problema técnico. "
+                    "Intenta de nuevo en unos segundos."
+                )
+            except Exception:
+                log.exception("photo_failure_notice_failed")
         return
     keyboard = build_keyboard(reply.actions)
     log.debug("reply_keyboard buttons=%d", 0 if keyboard is None else len(keyboard.inline_keyboard))

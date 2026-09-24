@@ -56,14 +56,85 @@ MAX_CONSECUTIVE_ZERO_SEARCHES = 2     # búsquedas sin resultados consecutivas
 MAX_MESSAGES_IN_CONTEXT = 60          # techo absoluto del contexto del turno
 MAX_TOOL_CALLS_PER_TURN = 8           # presupuesto de tools por turno
 EMPTY_CONTENT_NUDGES = 1               # reintentos cuando el LLM responde vacío
+HALLUCINATION_NUDGES = 1              # reintentos cuando el LLM afirma enviar fotos sin evidencia
 MAX_REPLY_CHARS = 6000                # techo Telegram
 SEND_RESPONSE_TOOL = "send_response"
+
+# Frases que afirman o implican envío real de imágenes por Telegram.
+# Si el texto las contiene pero el turno no adjunta fotos verificadas,
+# el runtime lo trata como alucinación (no como envío).
+_IMAGE_CLAIM_PHRASES = (
+    "adjunto las", "adjuntan las", "se adjuntan", "te envío las", "te mando las",
+    "aquí tienes las", "aquí están las", "las imágenes se", "las fotos se",
+    "envío las imágenes", "envío las fotos", "mando las imágenes", "mando las fotos",
+    "adjunto imágenes", "adjunto fotos", "comparto las imágenes", "comparto las fotos",
+    # singular: "Aquí tienes una imagen", "te mando una foto", etc.
+    "aquí tienes una imagen", "aquí tienes una foto", "aquí tienes una fotografía",
+    "aquí está la imagen", "aquí está la foto", "aquí está la fotografía",
+    "adjunto la imagen", "adjunto la foto", "adjunto la fotografía",
+    "te envío la imagen", "te envío una imagen", "te envío una foto",
+    "te mando la imagen", "te mando una imagen", "te mando una foto",
+    "envío la imagen", "envío una imagen", "envío una foto",
+    "mando la imagen", "mando una imagen", "mando una foto",
+    "comparto la imagen", "comparto una imagen", "comparto una foto",
+    "te comparto la imagen", "te comparto una imagen", "te comparto la foto",
+    "te muestro la imagen", "te muestro una imagen", "te muestro la foto",
+)
+
+# Fallback genérico: verbo de envío + sustantivo visual en la misma respuesta.
+_IMAGE_CLAIM_VERBS = (
+    "aquí tienes", "aquí está", "aquí estan", "aquí están",
+    "te envío", "te envio", "te mando", "te comparto", "te muestro",
+    "envío", "envio", "mando", "comparto",
+)
+_IMAGE_CLAIM_NOUNS = ("imagen", "imágen", "foto", "fotografía", "fotografia")
+
+
+def claims_images(text: str | None) -> bool:
+    """True si el texto afirma o implica que se están enviando fotos.
+
+    Es la única fuente de verdad para la detección anti-alucinación:
+    la usan send_response, plain_text y forced_final.
+    """
+    if not text:
+        return False
+    low = text.lower()
+    if any(phrase in low for phrase in _IMAGE_CLAIM_PHRASES):
+        return True
+    return any(v in low for v in _IMAGE_CLAIM_VERBS) and any(n in low for n in _IMAGE_CLAIM_NOUNS)
+
+
+def _has_verified_image_evidence(outcome: TurnOutcome) -> bool:
+    """True si el turno ya obtuvo al menos una imagen utilizable."""
+    for env in outcome.evidence:
+        if env.get("tool") != "get_property_images" or not env.get("ok"):
+            continue
+        data = env.get("data") or {}
+        images = data.get("images") or []
+        if images:
+            return True
+    return bool(outcome.images)
+
+
+def _is_usable_image_path(path: str) -> bool:
+    """Verificación física mínima: existe, es archivo, no vacío, extensión válida."""
+    try:
+        from pathlib import Path
+
+        p = Path(path)
+        if not p.is_file():
+            return False
+        if p.stat().st_size == 0:
+            return False
+        return p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
+    except OSError:
+        return False
 
 # Acciones de teclado válidas (contrato de presentación, validado en runtime)
 KNOWN_KEYBOARD_ACTIONS = frozenset({
     "details", "images", "save", "compare", "slots", "book_slot", "confirm_booking",
     "cancel_booking", "contact_agent", "docs", "save_search", "list_saved",
-    "cancel_appt", "ver_mas_dias",
+    "list_favorites", "cancel_appt", "ver_mas_dias",
 })
 
 
@@ -179,6 +250,7 @@ class AgentRuntime:
         identical_count = 0
         zero_search_streak = 0
         empty_content_nudges = 0
+        hallucination_nudges = 0
         tool_budget = MAX_TOOL_CALLS_PER_TURN
         images_by_property: dict[str, list[str]] = {}
         # BUG-3: rastrear tools que fallaron y luego tuvieron éxito en el mismo turno
@@ -396,6 +468,37 @@ class AgentRuntime:
             if content and _looks_like_broken_tool_attempt(content):
                 content = ""
             if content:
+                # Anti-alucinación de imágenes en texto libre: el LLM NO puede
+                # afirmar un envío real sin haber obtenido fotos verificadas
+                # este turno. Si lo intenta, se le pide corrección con tools
+                # en vez de entregar la alucinación al usuario.
+                if claims_images(content) and not _has_verified_image_evidence(outcome):
+                    METRICS.inc("reply_claims_images_but_empty")
+                    log.warning(
+                        "plain_text_claims_images_blocked round=%s run_id=%s text=%r",
+                        round_num, run_id, content[:120],
+                    )
+                    if hallucination_nudges < HALLUCINATION_NUDGES:
+                        hallucination_nudges += 1
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "Tu respuesta afirma que envías imágenes pero en este turno "
+                                "no hay fotos verificadas adjuntas. Para enviar una foto real: "
+                                "1) llama get_property_images con el property_id de la propiedad "
+                                "(resuelve «esa/la casa» contra el estado), 2) verifica que el "
+                                "resultado traiga imágenes, 3) termina con send_response poniendo "
+                                "ese property_id en images[]. Si la tool indica que no hay fotos, "
+                                "dilo honestamente sin afirmar ningún envío."
+                            ),
+                        })
+                        continue
+                    # Sin rondas de corrección disponibles: respuesta honesta,
+                    # nunca la afirmación falsa original.
+                    content = (
+                        "En este momento no pude confirmar fotografías para esa propiedad. "
+                        "¿Te comparto los detalles o te ayudo a agendar una visita?"
+                    )
                 outcome.reply_text = content[:MAX_REPLY_CHARS]
                 outcome.finish = "plain_text"
                 outcome.status = "ok"
@@ -464,6 +567,19 @@ class AgentRuntime:
             return outcome
         if resp.tool_calls:  # contra contrato: sin tools no debería haber tool_calls
             log.warning("forced_final_returned_tool_calls n=%s", len(resp.tool_calls))
+        # Sin tools disponibles ya no se puede obtener evidencia nueva: si el
+        # texto afirma un envío de fotos, se sustituye por una respuesta
+        # honesta en vez de mentir al usuario.
+        if claims_images(content) and not _has_verified_image_evidence(outcome):
+            METRICS.inc("reply_claims_images_but_empty")
+            log.warning(
+                "forced_final_claims_images_blocked reason=%s run_id=%s",
+                reason, run_id,
+            )
+            content = (
+                "En este momento no pude confirmar fotografías para esa propiedad. "
+                "¿Te comparto los detalles o te ayudo a agendar una visita?"
+            )
         outcome.reply_text = content[:MAX_REPLY_CHARS]
         outcome.finish = "forced_final"
         outcome.status = "forced_final"
@@ -598,7 +714,83 @@ class AgentRuntime:
             data = envelope.get("data") or {}
             pid = data.get("property_id")
             if pid:
-                images_by_property[str(pid)] = list(data.get("images") or [])
+                # El tool devuelve metadatos (to_dict), no rutas: convertir a
+                # paths reales del disco y VERIFICAR que existen, son legibles
+                # y no están vacíos. Solo lo verificado llega a Telegram.
+                # Nunca se inventa una ruta ni se envía un nombre como texto.
+                from app.api.files import image_path_or_none
+
+                verified_paths: list[str] = []
+                verified_images: list[dict] = []
+                missing_count = 0
+                for img in data.get("images") or []:
+                    fname = img.get("filename") if isinstance(img, dict) else None
+                    if not fname and isinstance(img, str):
+                        fname = img
+                    if not fname:
+                        missing_count += 1
+                        continue
+                    resolved = image_path_or_none(str(pid), str(fname))
+                    if resolved is None:
+                        missing_count += 1
+                        continue
+                    try:
+                        if not resolved.is_file() or resolved.stat().st_size == 0:
+                            missing_count += 1
+                            continue
+                        if resolved.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+                            missing_count += 1
+                            continue
+                    except OSError:
+                        missing_count += 1
+                        continue
+                    verified_paths.append(str(resolved))
+                    if isinstance(img, dict):
+                        verified_images.append(img)
+                    else:
+                        verified_images.append({"filename": fname})
+                images_by_property[str(pid)] = verified_paths
+                code = data.get("property_code", "?")
+                log.info(
+                    "property_image_request property_id=%s code=%s found=%s verified=%s missing=%s run_id=%s",
+                    pid, code, len(data.get("images") or []),
+                    len(verified_paths), missing_count, run_id,
+                )
+                if not verified_paths:
+                    # Hay metadatos pero ningún archivo utilizable (o cero
+                    # imágenes en DB): el turno NO tiene fotos para enviar.
+                    # Se convierte en error estructurado para que el LLM
+                    # responda con la rama honesta en vez de alucinar.
+                    if envelope.get("ok"):
+                        reason = "no_image" if not (data.get("images") or []) else "file_missing"
+                        envelope = {
+                            "tool": tc.name, "ok": False,
+                            "data": {
+                                "property_id": str(pid),
+                                "property_code": code,
+                                "reason": reason,
+                                "verified_count": 0,
+                            },
+                            "error": {
+                                "code": "NO_IMAGES" if reason == "no_image" else "IMAGE_FILES_MISSING",
+                                "message": (
+                                    "En este momento esta propiedad no tiene fotografías "
+                                    "disponibles." if reason == "no_image" else
+                                    "La propiedad tiene imágenes registradas pero los archivos "
+                                    "no están disponibles. No afirmes ningún envío."
+                                ),
+                                "retryable": False,
+                            },
+                        }
+                        raw = {"ok": False}
+                else:
+                    # Solo lo verificado viaja en el contexto: el LLM decide
+                    # con archivos reales, no con nombres huérfanos.
+                    if isinstance(envelope.get("data"), dict):
+                        envelope["data"]["images"] = verified_images
+                        envelope["data"]["verified_count"] = len(verified_paths)
+                        if missing_count:
+                            envelope["data"]["missing_count"] = missing_count
         if raw.get("ok", True):
             if idempotency_key:
                 ctx.idempotency_keys[idempotency_key] = tc.name
@@ -668,15 +860,9 @@ class AgentRuntime:
                 )
 
         # Anti-alucinación: detectar si el texto afirma enviar imágenes pero no hay images[]
-        # Frases típicas que implican envío de imágenes
-        text_lower = text.lower()
-        claims_images = any(phrase in text_lower for phrase in [
-            "adjunto las", "adjuntan las", "se adjuntan", "te envío las", "te mando las",
-            "aquí tienes las", "aquí están las", "las imágenes se", "las fotos se",
-            "envío las imágenes", "envío las fotos", "mando las imágenes", "mando las fotos",
-            "adjunto imágenes", "adjunto fotos", "comparto las imágenes", "comparto las fotos",
-        ])
-        if claims_images:
+        # (usa la única fuente de verdad claims_images(): send_response, texto
+        # libre y forced_final comparten el mismo criterio).
+        if claims_images(text):
             resolved_images = args.get("images") or []
             if not resolved_images:
                 METRICS.inc("reply_claims_images_but_empty")
@@ -695,6 +881,7 @@ class AgentRuntime:
             "el vendedor recibir", "el propietario recibir", "el dueño recibir",
             "ya tengo registrada tu solicitud con el", "solicitud registrada con el",
         ]
+        text_lower = text.lower()
         if any(phrase in text_lower for phrase in seller_notify_phrases):
             METRICS.inc("seller_notification_claimed")
             # No bloqueamos, solo métrica - el system prompt debería prevenirlo
@@ -718,7 +905,9 @@ class AgentRuntime:
         """Resuelve referencias de propiedades a rutas reales obtenidas este turno.
 
         Solo usa evidencia del turno (images_by_property): el runtime nunca
-        inventa rutas ni consulta el disco por su cuenta.
+        inventa rutas ni consulta el disco por su cuenta. Además filtra por
+        existencia física: un path que ya no existe se trata como no resuelto
+        para que send_response sea rechazado en vez de alucinar.
         """
         resolved: list[str] = []
         missing: list[str] = []
@@ -737,7 +926,11 @@ class AgentRuntime:
                     if paths:
                         break
             if paths:
-                resolved.extend(paths)
+                existing = [p for p in paths if _is_usable_image_path(p)]
+                if existing:
+                    resolved.extend(existing)
+                else:
+                    missing.append(ref)
             else:
                 missing.append(ref)
         return resolved, missing
@@ -767,5 +960,5 @@ def classify_exception_quiet(exc: Exception) -> ErrorCategory:
 
     try:
         return classify_exception(exc)
-    except Exception:  # pragma: no cover - clasificación nunca debe fallar
+    except Exception:  # noqa: BLE001
         return ErrorCategory.UNKNOWN

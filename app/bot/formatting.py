@@ -45,8 +45,6 @@ def property_card(prop: Property) -> str:
     if prop.description:
         desc = prop.description[:400]
         lines.append(f"\n{desc}{'…' if len(prop.description) > 400 else ''}")
-    if prop.project:
-        lines.append(f"🏗 Proyecto: {prop.project.name}")
     return "\n".join(lines)
 
 

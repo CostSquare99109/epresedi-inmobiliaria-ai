@@ -6,16 +6,16 @@ Asistente inmobiliario conversacional para Telegram con **RAG real** e inteligen
 
 ```
 TELEGRAM → bot → Conversation Layer → AI Orchestrator
-                                          │
-              ┌───────────────┬───────────┴─────────┐
-              ▼               ▼                     ▼
-        Búsqueda híbrida     RAG (pgvector)      CRM / Agenda
-        (SQL + FTS + vector)                       │
-              └───────────────┬─────────────────────┘
-                              ▼
-                        NVIDIA Build (LLM)
-                              ▼
-                        Respuesta al usuario
+                                           │
+               ┌───────────────┬───────────┴─────────┐
+               ▼               ▼                     ▼
+         Búsqueda híbrida     RAG (pgvector)      CRM / Agenda
+         (SQL + FTS + vector)                       │
+               └───────────────┬─────────────────────┘
+                               ▼
+                         NVIDIA Build (LLM)
+                               ▼
+                         Respuesta al usuario
 ```
 
 ---
@@ -26,7 +26,6 @@ TELEGRAM → bot → Conversation Layer → AI Orchestrator
 - PostgreSQL ≥ 16 con la extensión **pgvector**
 - Redis ≥ 5 (opcional: el queue hace fallback a memoria)
 - Node.js ≥ 20.12 (solo para el panel admin; probado con 24)
-- Docker + Docker Compose (opcional, para la infraestructura)
 
 ## 2. Instalación
 
@@ -50,18 +49,26 @@ Variables obligatorias para el modo completo:
 
 Sin esas variables el sistema arranca en **modo determinista**: todas las respuestas se generan desde datos reales (búsqueda estructurada + extracción de documentos) sin LLM. Nada se inventa.
 
-## 4. Docker (infraestructura)
+## 4. Infraestructura (PostgreSQL + Redis)
+
+El proyecto **no usa Docker**. Los servicios se ejecutan de forma nativa:
 
 ```bash
-docker compose up -d     # postgres (pgvector/pgvector:pg18) + redis 7
+# PostgreSQL (Termux / Linux)
+initdb -D ~/pgdata-inmob
+pg_ctl -D ~/pgdata-inmob start
+# En la BD: CREATE EXTENSION vector;
+
+# Redis (Termux / Linux)
+redis-server --daemonize yes --port 6379
 ```
 
-El backend y el panel se ejecutan fuera de Docker (ver sección 12). Alternativa nativa (Termux/localhost): `main.py` arranca automáticamente los clusters locales si detecta `pg_ctl`/`redis-server`.
+`main.py` detecta si `pg_ctl`/`redis-server` están en PATH y los puertos 5432/6379 están libres, y los arranca automáticamente como conveniencia (Termux/nativo).
 
 ## 5. PostgreSQL
 
 ```bash
-# con Docker ya está listo; en nativo:
+# En nativo:
 createdb inmobiliaria   # (main.py crea la BD si falta)
 ```
 
@@ -70,7 +77,7 @@ createdb inmobiliaria   # (main.py crea la BD si falta)
 ## 6. Redis
 
 ```bash
-redis-server --daemonize yes --port 6379   # o docker compose up -d redis
+redis-server --daemonize yes --port 6379
 ```
 
 Si Redis no está disponible, el queue de jobs funciona con una cola en memoria (documentado en `docs/local-development.md`).
@@ -104,9 +111,9 @@ Toda modificación de esquema requiere una migración Alembic nueva (`migrations
 python -m scripts.seed
 ```
 
-⚠️ **Destructivo**: vacía todas las tablas antes de sembrar (propiedades, proyectos, documentos, leads, citas, conversaciones, eventos de IA, favoritos, búsquedas y preferencias). Se **niega a ejecutarse** con `APP_ENV=production` salvo que se exporte `SEED_ALLOW_PRODUCTION=1`. Úsalo siempre contra una BD dedicada de desarrollo; los tests lo reutilizan contra `inmobiliaria_test` (`tests/conftest.py`), nunca contra la BD de desarrollo.
+⚠️ **Destructivo**: vacía todas las tablas antes de sembrar (propiedades, documentos, leads, citas, conversaciones, eventos de IA, favoritos, búsquedas y preferencias). Se **niega a ejecutarse** con `APP_ENV=production` salvo que se exporte `SEED_ALLOW_PRODUCTION=1`. Úsalo siempre contra una BD dedicada de desarrollo; los tests lo reutilizan contra `inmobiliaria_test` (`tests/conftest.py`), nunca contra la BD de desarrollo.
 
-Inserta: 3 proyectos, 16 propiedades (todos los estados: AVAILABLE/RESERVED/SOLD/INACTIVE), 4 documentos (PDF/DOCX/TXT/MD — pasan por el pipeline RAG completo) y portadas JPEG **sintéticas** generadas localmente con Pillow (color + código): son portadas de trabajo, no fotografías reales del inmueble. En producción el inventario se carga con datos y fotos reales vía API. Detalle: `docs/data-audit.md`.
+Inserta: 16 propiedades (todos los estados: AVAILABLE/RESERVED/SOLD/INACTIVE), 4 documentos (PDF/DOCX/TXT/MD — pasan por el pipeline RAG completo) y portadas JPEG **sintéticas** generadas localmente con Pillow (color + código): son portadas de trabajo, no fotografías reales del inmueble. En producción el inventario se carga con datos y fotos reales vía API. Detalle: `docs/data-audit.md`.
 
 ## 11. RAG (ingestión de documentos)
 
@@ -155,8 +162,8 @@ Los tests usan una base de datos aislada (`inmobiliaria_test`), embeddings local
 
 | Problema | Solución |
 |---|---|
-| `pgvector no instalado` | Docker: usa la imagen `pgvector/pgvector`. Termux: compilación manual (ver `docs/local-development.md`) |
-| `PostgreSQL no accesible` | `docker compose up -d` o `pg_ctl start`; revisa `DATABASE_URL` en `.env` |
+| `pgvector no instalado` | Termux: compilación manual (ver `docs/local-development.md`) |
+| `PostgreSQL no accesible` | `pg_ctl start`; revisa `DATABASE_URL` en `.env` |
 | `NVIDIA API ERROR` en doctor | Revisa `NVIDIA_API_KEY`/`NVIDIA_MODEL`; el bot sigue en modo determinista |
 | El bot no responde | Verifica `TELEGRAM_BOT_TOKEN` y que `main.py` esté corriendo; mira los logs |
 | 401 en el panel | Copia `ADMIN_TOKEN` del `.env` raíz a `admin/.env.local` |
@@ -176,7 +183,7 @@ docs/
 ├── ai.md                  # LLM/embeddings providers, fallbacks, anti-alucinación
 ├── agent-tools.md         # herramientas del agente y flujo tool-calling
 ├── telegram.md            # handlers, teclados, UX
-├── local-development.md   # entornos nativo/Docker, scripts
+├── local-development.md   # entornos nativo, scripts
 ├── testing.md             # qué cubre cada suite
 ├── security.md            # seguridad de archivos, rate limiting, privacidad
 ├── admin-panel.md         # panel administrativo: arquitectura, componentes, tokens

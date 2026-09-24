@@ -124,6 +124,7 @@ class Orchestrator:
             "docs": "Muéstrame los documentos de la propiedad {ref}",
             "save_search": "Guárdame esta búsqueda como alerta",
             "list_saved": "Muéstrame mis búsquedas guardadas",
+            "list_favorites": "Muéstrame mis favoritos guardados",
             "cancel_appt": "Cancela mi cita {ref}",
             "create_alert": "Crea una alerta con estos criterios",
             "list_alerts": "Muéstrame mis alertas",

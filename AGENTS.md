@@ -17,7 +17,7 @@
 | Create admin user | `python -m scripts.create_admin` |
 | Admin panel dev | `cd admin && npm run dev` |
 | Admin panel typecheck | `cd admin && npm run typecheck` |
-| Start infra (Postgres + Redis) | `docker compose up -d` |
+| Start infra (Postgres + Redis) | `pg_ctl -D ~/pgdata-inmob start && redis-server --daemonize yes` |
 
 ## Project Structure
 
@@ -103,15 +103,15 @@ epresedi-inmobiliaria-ai/
 
 | Issue | Cause / Fix |
 |-------|-------------|
-| `pgvector no instalado` | Use Docker image `pgvector/pgvector:pg18` or compile manually (Termux: see `docs/local-development.md`) |
-| `PostgreSQL no accesible` | `docker compose up -d` or `pg_ctl start`; verify `DATABASE_URL` |
+| `pgvector no instalado` | Compile manually (Termux: see `docs/local-development.md`) |
+| `PostgreSQL no accesible` | `pg_ctl start`; verify `DATABASE_URL` |
 | `NVIDIA API ERROR` | Check `NVIDIA_API_KEY`/`NVIDIA_MODEL`; bot still works in deterministic mode |
 | Bot doesn't respond | Verify `TELEGRAM_BOT_TOKEN` and that `main.py` is running; check logs |
 | 401 in admin panel | Copy `ADMIN_TOKEN` from root `.env` to `admin/.env.local` |
 | Seed refuses to run | `APP_ENV=production` blocks it; use dev DB or export `SEED_ALLOW_PRODUCTION=1` |
 | Progress message not updating | Check `TELEGRAM_BOT_TOKEN` and rate limits; `RetryAfter` is handled with backoff |
 | Reasoning level not working | Model must support `reasoning_effort` (NVIDIA Build compatible models); check logs for `reasoning_level_invalid` |
-| Auto-start fails on Termux | `main.py` tries `pg_ctl`/`redis-server` if ports 5432/6379 are free; ensure they're in PATH or use Docker |
+| Auto-start fails on Termux | `main.py` tries `pg_ctl`/`redis-server` if ports 5432/6379 are free; ensure they're in PATH |
 | Diagnose env issues | Run `python -m scripts.doctor` (checks Python, Postgres, Redis, pgvector, NVIDIA, schema, storage, RAG) |
 
 ## Migration Workflow
@@ -182,7 +182,7 @@ Technical docs in `docs/`:
 - `ai.md` — LLM/embedding providers, fallbacks, anti-hallucination
 - `agent-tools.md` — tool-calling flow
 - `telegram.md` — handlers, keyboards, UX
-- `local-development.md` — native/Docker environments
+- `local-development.md` — native environment, scripts
 - `testing.md` — suite coverage
 - `security.md` — file security, rate limiting, privacy
 - `admin-panel.md` — admin architecture, components, tokens

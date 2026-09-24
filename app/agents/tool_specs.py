@@ -35,7 +35,7 @@ TOOL_SPECS: list[dict] = [
             },
             "images": {
                 "type": "array", "items": {"type": "string"},
-                "description": "IDs/códigos de propiedades cuyas imágenes (obtenidas con get_property_images este turno) quieres adjuntar",
+                "description": "ENVÍA realmente las fotos por Telegram: IDs/códigos de propiedades cuyas imágenes YA obtuviste con get_property_images en ESTE turno. Sin esta lista no se adjunta nada, aunque el texto hable de fotos.",
             },
             "keyboard": {
                 "type": "array", "maxItems": 8,
@@ -127,6 +127,9 @@ TOOL_SPECS: list[dict] = [
                 "min_price": {"type": "number"}, "max_price": {"type": "number"},
                 "bedrooms": {"type": "integer"}, "bathrooms": {"type": "integer"},
                 "parking": {"type": "integer"}, "min_area": {"type": "number"},
+                "floors": {"type": "integer", "description": "Número mínimo de pisos totales de la propiedad"},
+                "offered_floor": {"type": "integer", "description": "El usuario quiere ofertado ESE piso («solo el segundo piso», «piso 1»). Distingue floor_offer_type en cada resultado: single_floor/multiple_floors con ese piso ≠ propiedad completa."},
+                "floor_offer_type": {"type": "string", "enum": ["full_property", "single_floor", "multiple_floors", "partial"], "description": "Qué parte se ofrece: propiedad completa, un piso, varios pisos o una parte (anexo/apartamento interior)"},
             }},
             "semantic_query": {"type": "string"},
         }},
@@ -154,8 +157,36 @@ TOOL_SPECS: list[dict] = [
         "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "property_id": {"type": "string"}}},
     }},
     {"type": "function", "function": {
-        "name": "get_property_images", "description": "Lista imágenes locales de una propiedad. Usa 'limit' para controlar cuántas imágenes devolver (ej. 1 para 'una imagen', 3 para 'tres fotos').",
-        "parameters": {"type": "object", "properties": {"property_id": {"type": "string"}, "limit": {"type": "integer", "description": "Máximo número de imágenes a devolver (opcional, default: todas)"}}},
+        "name": "get_property_images",
+        "description": (
+            "Obtiene las FOTOS REALES de una propiedad para ENVIARLAS por Telegram. "
+            "Resuelve código (PROP-XXXX), UUID u ordinal («la segunda»); si el usuario dice "
+            "«esa/la casa» sin código, omite property_id y se usa la propiedad en foco. "
+            "Usa 'limit' para cardinalidad (1 = «una imagen», N = «N fotos», sin limit = todas). "
+            "Cada imagen trae 'group' (portada, piso, bano, cocina, lavadero, parqueadero, "
+            "extra, general), 'extra_name' (p. ej. Piscina/Chimenea cuando group=extra), "
+            "'name', 'filename' y 'description'. "
+            "Si el usuario pide una característica («muéstrame el baño», «foto de la cocina», "
+            "«la piscina»), pasa 'group' (bano, cocina, lavadero, piso, portada, parqueadero, "
+            "extra) y, para extras, 'extra_name'. Envía SOLO imágenes del grupo pedido: nunca "
+            "sustituyas con fotos de otra característica. "
+            "Después DEBES poner ese property_id en send_response.images para que el envío ocurra. "
+            "Si devuelve error NO_IMAGES/IMAGE_FILES_MISSING, la propiedad no tiene fotos enviables "
+            "(de ese grupo): dilo honestamente y NUNCA afirmes un envío."
+        ),
+        "parameters": {"type": "object", "properties": {"property_id": {"type": "string", "description": "Código PROP-XXXX, UUID u ordinal; omítelo para «esa/la casa» (contexto)"}, "limit": {"type": "integer", "description": "Máximo número de imágenes a devolver (opcional, default: todas)"}, "group": {"type": "string", "enum": ["portada", "piso", "bano", "cocina", "lavadero", "parqueadero", "extra", "general"], "description": "Filtra por característica: bano («muéstrame el baño»), cocina, lavadero, piso («segundo piso»), portada, parqueadero o extra (piscina, chimenea...)"}, "extra_name": {"type": "string", "description": "Nombre del extra personalizado cuando group=extra (p. ej. Piscina)"}}},
+    }},
+    {"type": "function", "function": {
+        "name": "get_branch_info", "description": "Obtiene la información de la sede (oficina) asociada a una propiedad: nombre, ciudad, barrio, dirección completa.",
+        "parameters": {"type": "object", "properties": {"property_id": {"type": "string"}}, "required": ["property_id"]},
+    }},
+    {"type": "function", "function": {
+        "name": "get_business_hours", "description": "Obtiene el horario de atención de una sede. Puede llamarse con property_id (usa la sede de la propiedad) o branch_id directo. Devuelve horarios por día de la semana en zona horaria America/Bogota.",
+        "parameters": {"type": "object", "properties": {"property_id": {"type": "string"}, "branch_id": {"type": "string"}}},
+    }},
+    {"type": "function", "function": {
+        "name": "list_branches", "description": "Lista todas las sedes/oficinas de la inmobiliaria con su información de contacto y ubicación.",
+        "parameters": {"type": "object", "properties": {"active_only": {"type": "boolean", "description": "Solo sedes activas (default: true)"}}},
     }},
     {"type": "function", "function": {
         "name": "save_property", "description": "Guarda en favoritos.",
@@ -164,6 +195,10 @@ TOOL_SPECS: list[dict] = [
     {"type": "function", "function": {
         "name": "remove_saved_property", "description": "Quita de favoritos.",
         "parameters": {"type": "object", "properties": {"property_id": {"type": "string"}}},
+    }},
+    {"type": "function", "function": {
+        "name": "list_favorites", "description": "Lista las propiedades guardadas en favoritos del usuario.",
+        "parameters": {"type": "object", "properties": {}},
     }},
     {"type": "function", "function": {
         "name": "save_search", "description": "Guarda búsqueda estructurada para alertas.",

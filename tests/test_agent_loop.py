@@ -754,6 +754,13 @@ async def test_singular_image_request_returns_one_image(session, user_id):
     # Verificar que la respuesta final tiene 1 imagen
     assert len(reply.images) == 1, f"Expected 1 image in reply, got {len(reply.images)}"
     assert reply.intent == Intent.PROPERTY_IMAGES
+    # BUG: get_property_images devuelve metadatos (dict), no paths. El runtime
+    # debe convertirlos a rutas reales del disco para que Telegram pueda abrirlos.
+    from pathlib import Path
+
+    path = Path(reply.images[0])
+    assert isinstance(reply.images[0], str), f"image must be a path str, got {type(reply.images[0])}"
+    assert path.is_file(), f"image path does not exist on disk: {reply.images[0]}"
 
 
 async def test_singular_image_request_variations(session, user_id):
@@ -782,6 +789,8 @@ async def test_singular_image_request_variations(session, user_id):
 
         # Verificar que se envió 1 imagen
         assert len(reply.images) == 1, f"Variation '{msg}': expected 1 image, got {len(reply.images)}"
+        from pathlib import Path
+        assert Path(reply.images[0]).is_file(), f"not a real path: {reply.images[0]}"
 
 
 async def test_explicit_count_image_request(session, user_id):
@@ -802,6 +811,9 @@ async def test_explicit_count_image_request(session, user_id):
     # PROP-0008 tiene 3 imágenes en el seed
     assert len(reply.images) == 3, f"Expected 3 images, got {len(reply.images)}"
     assert reply.intent == Intent.PROPERTY_IMAGES
+    from pathlib import Path
+    for p in reply.images:
+        assert Path(p).is_file(), f"not a real path: {p}"
 
 
 async def test_plural_all_images_request(session, user_id):
@@ -820,6 +832,9 @@ async def test_plural_all_images_request(session, user_id):
 
     # PROP-0008 tiene 3 imágenes en el seed
     assert len(reply.images) == 3, f"Expected 3 images (all), got {len(reply.images)}"
+    from pathlib import Path
+    for p in reply.images:
+        assert Path(p).is_file(), f"not a real path: {p}"
 
 
 async def test_ambiguous_image_request_defaults_to_all(session, user_id):
@@ -838,6 +853,9 @@ async def test_ambiguous_image_request_defaults_to_all(session, user_id):
 
     # Por defecto debe enviar todas (3 para PROP-0008)
     assert len(reply.images) == 3, f"Expected 3 images (default all), got {len(reply.images)}"
+    from pathlib import Path
+    for p in reply.images:
+        assert Path(p).is_file(), f"not a real path: {p}"
 
 
 async def test_tool_returns_multiple_but_singular_request_limits_to_one(session, user_id):
@@ -861,3 +879,5 @@ async def test_tool_returns_multiple_but_singular_request_limits_to_one(session,
 
     # Verificar que se envió 1 imagen (el fix funciona)
     assert len(reply.images) == 1, f"Expected 1 image with singular request, got {len(reply.images)}"
+    from pathlib import Path
+    assert Path(reply.images[0]).is_file(), f"not a real path: {reply.images[0]}"
