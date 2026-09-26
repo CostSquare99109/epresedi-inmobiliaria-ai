@@ -110,7 +110,14 @@ async def test_naive_datetime_is_interpreted_as_business_time(session, user_id):
     prop = await _property(session)
     lead = await crm.get_or_create_lead(session, user_id)
 
-    local_time = dt.datetime(2026, 9, 21, 14, 0)
+    # Próximo lunes 14:00 Bogotá (fecha futura dinámica: el pasado se rechaza).
+    bogota = zoneinfo.ZoneInfo("America/Bogota")
+    now_local = dt.datetime.now(bogota)
+    days_ahead = (0 - now_local.weekday()) % 7 or 7
+    target = (now_local + dt.timedelta(days=days_ahead)).replace(
+        hour=14, minute=0, second=0, microsecond=0
+    )
+    local_time = target.replace(tzinfo=None)
     appt = await appts.create_appointment(
         session,
         property_id=prop.id,
@@ -119,9 +126,67 @@ async def test_naive_datetime_is_interpreted_as_business_time(session, user_id):
     )
 
     assert appt.scheduled_at.tzinfo is not None
-    assert appt.scheduled_at == dt.datetime(
-        2026, 9, 21, 19, 0, tzinfo=dt.UTC
+    assert appt.scheduled_at == target.astimezone(dt.UTC)
+
+    # Cleanup
+    await session.delete(appt)
+    await session.flush()
+
+
+async def test_create_appointment_rejects_past_datetime(session, user_id):
+    """V-03: agendar en el pasado debe rechazarse (OutsideBusinessHours, no 200)."""
+    await _ensure_user(session, user_id)
+    prop = await _property(session)
+    lead = await crm.get_or_create_lead(session, user_id)
+    past = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+    with pytest.raises(appts.OutsideBusinessHours):
+        await appts.create_appointment(
+            session, property_id=prop.id, lead_id=lead.id, scheduled_at=past
+        )
+
+
+async def test_create_appointment_requires_minimum_advance(session, user_id):
+    """V-03: menos de 2h de anticipación debe rechazarse."""
+    await _ensure_user(session, user_id)
+    prop = await _property(session)
+    lead = await crm.get_or_create_lead(session, user_id)
+    soon = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=30)
+    with pytest.raises(appts.OutsideBusinessHours):
+        await appts.create_appointment(
+            session, property_id=prop.id, lead_id=lead.id, scheduled_at=soon
+        )
+
+
+async def test_create_appointment_rejects_sunday(session, user_id):
+    """V-04: el servicio rechaza domingos (la ruta lo mapea a 422, nunca 500)."""
+    await _ensure_user(session, user_id)
+    prop = await _property(session)
+    lead = await crm.get_or_create_lead(session, user_id)
+    bogota = zoneinfo.ZoneInfo("America/Bogota")
+    now_local = dt.datetime.now(bogota)
+    days_ahead = (6 - now_local.weekday()) % 7 or 7
+    sunday_10 = (now_local + dt.timedelta(days=days_ahead)).replace(
+        hour=10, minute=0, second=0, microsecond=0
     )
+    with pytest.raises(appts.OutsideBusinessHours):
+        await appts.create_appointment(
+            session, property_id=prop.id, lead_id=lead.id, scheduled_at=sunday_10
+        )
+
+
+async def test_active_slot_unique_index_exists(session):
+    """V-01: el índice único parcial anti-doble-reserva existe en la DB."""
+    from sqlalchemy import text
+
+    rows = (
+        await session.execute(
+            text(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE tablename='appointments' AND indexname='uq_appointments_active_slot'"
+            )
+        )
+    ).all()
+    assert rows, "falta el índice uq_appointments_active_slot"
 
 
 async def test_slots_include_local_datetime_for_callbacks(session, user_id):
@@ -994,3 +1059,84 @@ async def test_noon_formatting_not_am(session, user_id):
         assert noon_slot is not None
         # The datetime_local should be 12:00
         assert "12:00" in noon_slot["datetime_local"]
+
+
+# ------------------------------------------------------------------ IDOR (ownership)
+async def test_cancel_appointment_is_scoped_to_owner(session, user_id):
+    """IDOR: con user_scope, un usuario NO puede cancelar la cita de otro."""
+    other_id = user_id + 1
+    await _ensure_user(session, user_id)
+    await _ensure_user(session, other_id)
+    prop = await _property(session)
+    lead_other = await crm.get_or_create_lead(session, other_id)
+    appt = await appts.create_appointment(
+        session, property_id=prop.id, lead_id=lead_other.id,
+        scheduled_at=await _next_weekday_slot(session),
+    )
+
+    # Un tercero con scope propio NO puede cancelarla...
+    assert await appts.cancel_appointment(session, appt.id, user_scope=user_id) is False
+    from app.database.models import AppointmentStatus
+
+    await session.refresh(appt)
+    assert appt.status == AppointmentStatus.REQUESTED  # sigue activa
+
+    # ...y el dueño sí puede.
+    assert await appts.cancel_appointment(session, appt.id, user_scope=other_id) is True
+
+
+async def test_reschedule_appointment_is_scoped_to_owner(session, user_id):
+    """IDOR: con user_scope, un usuario NO puede reprogramar la cita de otro."""
+    other_id = user_id + 1
+    await _ensure_user(session, user_id)
+    await _ensure_user(session, other_id)
+    prop = await _property(session)
+    lead_other = await crm.get_or_create_lead(session, other_id)
+    appt = await appts.create_appointment(
+        session, property_id=prop.id, lead_id=lead_other.id,
+        scheduled_at=await _next_weekday_slot(session),
+    )
+
+    slots = await appts.list_available_slots(session, prop.id)
+    later = dt.datetime.fromisoformat(slots[0]["datetime"])
+    if later <= appt.scheduled_at and len(slots) > 1:
+        later = dt.datetime.fromisoformat(slots[1]["datetime"])
+
+    # Un tercero con scope propio NO puede reprogramarla...
+    assert await appts.reschedule_appointment(
+        session, appt.id, later, user_scope=user_id
+    ) is None
+
+    # ...y el dueño sí puede (hora distinta a la original).
+    if later != appt.scheduled_at:
+        moved = await appts.reschedule_appointment(
+            session, appt.id, later, user_scope=other_id
+        )
+        assert moved is not None and moved.id == appt.id
+
+    await session.delete(appt)
+    await session.flush()
+
+
+async def test_agent_tool_cancel_cannot_touch_foreign_appointments(session, user_id):
+    """El agente Telegram siempre opera con el user_id del chat: no puede
+    cancelar citas ajenas aunque el LLM pase un id ajeno (IDOR cerrado)."""
+    from app.agents.tools import ToolContext, run_tool
+
+    other_id = user_id + 1
+    await memory_service.get_or_create_user(session, user_id, "t", "T")
+    await _ensure_user(session, other_id)
+    prop = await _property(session)
+    lead_other = await crm.get_or_create_lead(session, other_id)
+    appt = await appts.create_appointment(
+        session, property_id=prop.id, lead_id=lead_other.id,
+        scheduled_at=await _next_weekday_slot(session),
+    )
+
+    ctx = ToolContext(session=session, user_id=user_id, conversation_id=None, state={})
+    res = await run_tool("cancel_appointment", {"appointment_id": str(appt.id)}, ctx)
+    assert res["cancelled"] is False  # ajena: cancelación bloqueada
+
+    ctx_owner = ToolContext(session=session, user_id=other_id, conversation_id=None, state={})
+    res_owner = await run_tool("cancel_appointment", {"appointment_id": str(appt.id)}, ctx_owner)
+    assert res_owner["cancelled"] is True  # dueño: funciona

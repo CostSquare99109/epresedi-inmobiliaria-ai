@@ -20,3 +20,4 @@ admin/.env.local
 pgdata/
 dump.rdb
 =3.3
+cookies.txt

@@ -139,3 +139,14 @@ tests/                  # conftest.py pins env before any app.* import
 ## Documentation
 
 Technical docs in `docs/`: `architecture.md`, `database.md`, `rag.md`, `ai.md`, `agent-tools.md`, `telegram.md`, `local-development.md`, `testing.md`, `security.md`, `data-audit.md`, `troubleshooting.md`. Note: `docs/admin-panel.md` still documents the pre-Vite Next.js panel — treat `admin-vite/` code as the truth. Root-level `AUDITORIA_*.md` / `*_AUDIT.md` / `*REPORT*.md` files are historical audit artifacts, not current specs.
+
+## Seguridad (auditoría 2026-09-26)
+
+- **Toda ruta de administración lleva `require_permission(...)`** (verificado endpoint por endpoint). Endpoints públicos por diseño: `GET /health*`, `GET /contact`, `GET /properties` (listado público), `GET /properties/{id}` (+imágenes/slots). `/properties/admin` exige sesión.
+- **JWT es la única autoridad admin**: cookie httponly `admin_access_token` (SameSite=lax) o Bearer. `X-Admin-Token`/`ADMIN_TOKEN` son legacy sin uso en código productivo. `JWT_SECRET` con default público bloquea el arranque en production (`main.py` guard fail-fast); generarlo con `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+- **Aislamiento de usuario**: CRM/memoria filtran por `user_id`; las tools del agente (`cancel_appointment`, `reschedule_appointment`) pasan `user_scope=ctx.user_id` (`get_appointment_for_user`). Tests IDOR en `tests/test_appointments.py`.
+- **Uploads**: whitelist de extensiones (imágenes: jpg/jpeg/png/webp; documentos: pdf/docx/txt/md), bloqueo de contenido HTML/script, tamaño cap, nombres uuid-based, `image_path_or_none` anti-traversal.
+- **CSV exports** neutralizan fórmulas (`_csv_safe`, CWE-1236). **Cabeceras de seguridad** (nosniff, X-Frame-Options, Referrer-Policy; HSTS solo en production) vía middleware en `routes.py`. Swagger/OpenAPI desactivados en production (`_fastapi_kwargs`).
+- **Redis**: `protected-mode=yes` (rechaza clientes externos sin auth); recomendado `--bind 127.0.0.1` al desplegar. Artefactos runtime (`dump.rdb`, `cookies.txt`, `*.log`, `pgdata/`) des-trackeados y en `.gitignore` — no los re-adds con `git add -f`.
+- **Tests de seguridad**: `tests/test_security.py` (injection, traversal, RBAC matrix, CSV, headers, uploads) + `tests/test_api.py` (401s, JWT) + `tests/test_appointments.py` (IDOR). Ejecutarlos tras tocar auth, uploads, exports o tools.
+- Riesgos pendientes (ver informe de auditoría): rotación/revocación de refresh tokens, lockout por cuenta en login, magic bytes estrictos en documentos, migración python-jose → pyjwt.

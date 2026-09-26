@@ -143,6 +143,22 @@ async def bootstrap() -> None:
 
 
 async def run() -> None:
+    # Guard de seguridad antes de tocar infra: un JWT_SECRET por defecto
+    # permite a cualquiera firmar tokens admin (el código es público).
+    s = get_settings()
+    if s.JWT_SECRET == "changeme-jwt-secret":
+        if s.APP_ENV == "production":
+            raise RuntimeError(
+                "JWT_SECRET insecure: es el valor por defecto del código y el repo es público; "
+                "cualquiera podría firmar tokens de superadmin. Genera uno con "
+                "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"` "
+                "y configúralo en .env."
+            )
+        log.warning(
+            "JWT_SECRET por defecto (solo dev): la firma de tokens admin es insegura. "
+            "Configura JWT_SECRET en .env antes de desplegar."
+        )
+
     # Arranque real: infra checks (postgres/redis) → migrations → pgvector.
     # Sin esta llamada el proceso arranca degradado y en silencio.
     await bootstrap()
@@ -151,7 +167,6 @@ async def run() -> None:
     from app.ai.llm import get_llm_provider
     from app.bot import handlers
 
-    s = get_settings()
     llm = get_llm_provider()
     if llm is None:
         log.error(

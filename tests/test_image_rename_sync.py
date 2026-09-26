@@ -35,7 +35,19 @@ async def _create(client, headers, title="Casa sync"):
     return r.json()
 
 
-async def _upload(client, headers, pid, name, group="general", content=b"fake-image-bytes"):
+def _real_jpg() -> bytes:
+    """JPEG mínimo válido (los uploads exigen imagen real, no bytes falsos)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (4, 4), "red").save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+async def _upload(client, headers, pid, name, group="general", content=None):
+    content = content if content is not None else _real_jpg()
     r = await client.post(
         f"/properties/{pid}/images",
         files={"file": (f"{name}.jpg", content, "image/jpeg")},
@@ -133,8 +145,8 @@ def test_set_cover_returns_rename_mapping(tmp_path, monkeypatch):
         lambda: SimpleNamespace(storage_dir=tmp_path, MAX_UPLOAD_MB=15),
     )
     pid = "00000000-0000-0000-0000-000000000099"
-    img_files.save_property_image(pid, b"a", "x.jpg", preferred_name="Portada")
-    img_files.save_property_image(pid, b"b", "x.jpg", preferred_name="Bano")
+    img_files.save_property_image(pid, _real_jpg(), "x.jpg", preferred_name="Portada")
+    img_files.save_property_image(pid, _real_jpg(), "x.jpg", preferred_name="Bano")
     images, mapping = img_files.set_property_cover(pid, "Bano.jpg")
     assert mapping.get("Bano.jpg") == "cover.jpg"
     assert "Bano.jpg" not in images and "cover.jpg" in images

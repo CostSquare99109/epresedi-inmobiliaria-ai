@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import csv
 import io
+import time
 import uuid as uuid_mod
 from datetime import UTC, datetime
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.files import (
     delete_property_image,
@@ -45,6 +47,8 @@ from app.database.models import (
     AppointmentStatus,
     AppSetting,
     Branch,
+    CmsContent,
+    CmsContentType,
     Conversation,
     Document,
     Lead,
@@ -62,12 +66,74 @@ from app.security.auth import (
     create_access_token,
     create_refresh_token,
     decode_refresh_token,
+    is_refresh_token_revoked,
     log_admin_action,
+    refresh_token_ttl_seconds,
     require_admin_user,
     require_permission,
+    revoke_refresh_token,
 )
 
-app = FastAPI(title="inmobiliaria-ai", version="0.1.0")
+def _fastapi_kwargs() -> dict:
+    """Swagger/OpenAPI solo en desarrollo: en producción el mapa completo de
+    endpoints no se expone sin sesión (CWE-200)."""
+    prod = get_settings().APP_ENV == "production"
+    return {
+        "title": "inmobiliaria-ai",
+        "version": "0.1.0",
+        "docs_url": None if prod else "/docs",
+        "redoc_url": None if prod else "/redoc",
+        "openapi_url": None if prod else "/openapi.json",
+    }
+
+
+app = FastAPI(**_fastapi_kwargs())
+
+
+@app.middleware("http")
+async def csrf_origin_guard(request: Request, call_next):
+    """Defensa CSRF en profundidad (complementa SameSite=lax de la cookie).
+
+    El navegador siempre envía Origin en fetch POST/PUT/PATCH/DELETE; si el
+    origen no es de confianza se rechaza con 403 antes de tocar la sesión.
+    Sin Origin/Referer (curl, tests, webhooks) la petición pasa: el modelo de
+    amenaza CSRF es el navegador de la víctima, no un cliente directo (que ya
+    necesitaría la cookie robada por otra vía).
+    """
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        trusted = {
+            o.strip().rstrip("/")
+            for o in get_settings().CSRF_TRUSTED_ORIGINS.split(",")
+            if o.strip()
+        }
+        for header in ("origin", "referer"):
+            value = request.headers.get(header)
+            if value and value.rstrip("/").split("?")[0] not in trusted and not any(
+                value.startswith(t + "/") for t in trusted
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Origen no permitido para esta operación."},
+                )
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Cabeceras de seguridad básicas en toda respuesta (CWE-693).
+
+    nosniff evita que un archivo subido se interprete como HTML/script al
+    servirse; HSTS solo en producción (requiere HTTPS real delante).
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if get_settings().APP_ENV == "production":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
 
 _ORCH: dict = {"orchestrator": None}
 
@@ -182,13 +248,22 @@ async def login(data: LoginIn, request: Request) -> JSONResponse:
 
 @app.post("/auth/refresh")
 async def refresh_token(data: RefreshIn, request: Request) -> JSONResponse:
-    token_data = decode_refresh_token(data.refresh_token)
-    if token_data is None:
+    # Rotación de un solo uso (SEC-11): el refresh presentado se revoca al
+    # consumirse; reutilizarlo después (token robado o doble envío) es 401 y
+    # queda auditado como posible compromiso de sesión.
+    decoded = decode_refresh_token(data.refresh_token)
+    if decoded is None:
         raise HTTPException(401, "Refresh token inválido o expirado")
+    if await is_refresh_token_revoked(decoded.jti):
+        await _audit(request, None, "refresh", "auth",
+                     metadata={"jti": decoded.jti[:16], "email": decoded.email[:80]},
+                     result="denied", error_message="refresh revocado o reutilizado")
+        raise HTTPException(401, "Sesión revocada: vuelve a iniciar sesión")
     async with AsyncSessionLocal() as session:
-        user = await session.get(AdminUser, _uuid_or_none(token_data.sub))
+        user = await session.get(AdminUser, _uuid_or_none(decoded.sub))
         if user is None or not user.is_active:
             raise HTTPException(401, "Usuario inactivo")
+    await revoke_refresh_token(decoded.jti, refresh_token_ttl_seconds(decoded))
     s = get_settings()
     claims = {"sub": str(user.id), "email": user.email, "role": user.role.value, "name": user.name}
     access = create_access_token(claims)
@@ -210,8 +285,23 @@ async def me(user: AdminUser = Depends(require_admin_user)) -> dict:
 
 
 @app.post("/auth/logout")
-async def logout(request: Request, user: AdminUser = Depends(require_admin_user)) -> JSONResponse:
-    await _audit(request, user, "logout", "auth", str(user.id))
+async def logout(request: Request) -> JSONResponse:
+    # Logout idempotente (SEC-11): revoca el refresh en servidor aunque el
+    # access ya haya expirado; nunca falla (las cookies se borran igual).
+    user = None
+    try:
+        user = await require_admin_user(request)
+    except HTTPException:
+        user = None
+    refresh = request.cookies.get("admin_refresh_token", "")
+    revoked = False
+    if refresh:
+        decoded = decode_refresh_token(refresh)
+        if decoded is not None and decoded.jti:
+            await revoke_refresh_token(decoded.jti, refresh_token_ttl_seconds(decoded))
+            revoked = True
+    await _audit(request, user, "logout", "auth", str(user.id) if user else None,
+                 metadata={"refresh_revoked": revoked})
     response = JSONResponse(status_code=200, content={"ok": True})
     for name in ("admin_access_token", "admin_refresh_token"):
         response.delete_cookie(name, path="/")
@@ -227,6 +317,13 @@ async def health() -> dict:
 async def health_ready() -> JSONResponse:
     checks: dict[str, object] = {}
     errors: dict[str, str] = {}
+
+    def _fail(component: str, e: Exception) -> None:
+        # El detalle técnico queda en logs del servidor; la respuesta HTTP
+        # nunca expone rutas, usuarios ni configuración interna.
+        log.warning("health_ready component=%s error=%s", component, e)
+        errors[component] = f"{type(e).__name__}: componente no disponible"
+
     try:
         from sqlalchemy import text
 
@@ -237,7 +334,7 @@ async def health_ready() -> JSONResponse:
         checks["pgvector"] = True
     except Exception as e:
         checks["postgres"] = False
-        errors["postgres"] = str(e)[:200]
+        _fail("postgres", e)
     from app.workers.queue import redis_healthy
 
     checks["redis"] = await redis_healthy()
@@ -250,7 +347,7 @@ async def health_ready() -> JSONResponse:
             checks["nvidia"] = True
         except Exception as e:
             checks["nvidia"] = False
-            errors["nvidia"] = str(e)[:200]
+            _fail("nvidia", e)
     else:
         checks["nvidia"] = True  # deterministic mode
     try:
@@ -260,7 +357,7 @@ async def health_ready() -> JSONResponse:
         checks["storage"] = True
     except Exception as e:
         checks["storage"] = False
-        errors["storage"] = str(e)[:200]
+        _fail("storage", e)
     ok = all(bool(v) for v in checks.values())
     return JSONResponse(status_code=200 if ok else 503, content={"ok": ok, "checks": checks, "errors": errors})
 
@@ -548,7 +645,22 @@ async def agent_metrics(user: AdminUser = Depends(require_permission("settings.r
 
 # ------------------------------------------------------------------ properties
 @app.get("/properties")
-async def list_properties(status: str | None = None, city: str | None = None, limit: int = 50, offset: int = 0):
+async def list_properties(
+    request: Request,
+    status: str | None = None,
+    city: str | None = None,
+    limit: int = Query(default=50, ge=0, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    # Anti-DoS: el inventario público es el endpoint de lectura más costoso
+    # (incluye imágenes); presupuesto por IP/minuto, 429 al excederlo.
+    ip = request.client.host if request.client else "unknown"
+    try:
+        await ratelimit.check_rate_limit(
+            f"pub-properties:{ip}", limit=get_settings().RATE_LIMIT_PUBLIC_PER_MINUTE
+        )
+    except ratelimit.RateLimited:
+        raise HTTPException(429, "Demasiadas solicitudes. Intenta de nuevo en un minuto.")
     async with AsyncSessionLocal() as session:
         stmt = select(Property).order_by(Property.created_at.desc()).limit(min(limit, 200)).offset(offset)
         if status:
@@ -569,8 +681,9 @@ async def list_properties_admin(
     min_price: float | None = None,
     max_price: float | None = None,
     without_images: bool = False,
-    limit: int = 12,
-    offset: int = 0,
+    limit: int = Query(default=12, ge=0, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: AdminUser = Depends(require_permission("properties.read")),
 ):
     """Inventario admin: filtros combinados + total real + flag de imágenes."""
     async with AsyncSessionLocal() as session:
@@ -598,7 +711,7 @@ async def get_property(property_id: str):
 class PropertyIn(BaseModel):
     title: str = Field(max_length=200)
     property_type: str
-    price: float = Field(ge=0)
+    price: float = Field(ge=0, le=999999999999.99)
     operation: str = "SALE"
     description: str = Field(default="", max_length=10000)
     currency: str = Field(default="COP", min_length=3, max_length=3)
@@ -611,7 +724,7 @@ class PropertyIn(BaseModel):
     descriptive_location: str = Field(default="", max_length=500)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
-    area_m2: float | None = Field(default=None, ge=0)
+    area_m2: float | None = Field(default=None, ge=0, le=99999999.99)
     bedrooms: int | None = Field(default=None, ge=0)
     bathrooms: int | None = Field(default=None, ge=0)
     parking_spaces: int | None = Field(default=None, ge=0)
@@ -631,7 +744,7 @@ class PropertyIn(BaseModel):
     laundry_area_description: str = Field(default="", max_length=5000)
     has_parking: bool = False
     parking_description: str = Field(default="", max_length=5000)
-    rent_price: float | None = Field(default=None, ge=0)
+    rent_price: float | None = Field(default=None, ge=0, le=999999999999.99)
     services_included: str = Field(default="no_incluye", pattern="^(incluye|no_incluye)$")
     nomenclatura: str = Field(default="", max_length=240)
     visiting_hours: list[dict] = Field(default_factory=list)
@@ -667,7 +780,7 @@ class PropertyIn(BaseModel):
 class PropertyPatch(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=10000)
-    price: float | None = Field(default=None, ge=0)
+    price: float | None = Field(default=None, ge=0, le=999999999999.99)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     price_period: str | None = Field(default=None, max_length=20)
     city: str | None = Field(default=None, max_length=80)
@@ -678,7 +791,7 @@ class PropertyPatch(BaseModel):
     descriptive_location: str | None = Field(default=None, max_length=500)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
-    area_m2: float | None = Field(default=None, ge=0)
+    area_m2: float | None = Field(default=None, ge=0, le=99999999.99)
     bedrooms: int | None = Field(default=None, ge=0)
     bathrooms: int | None = Field(default=None, ge=0)
     parking_spaces: int | None = Field(default=None, ge=0)
@@ -697,7 +810,7 @@ class PropertyPatch(BaseModel):
     laundry_area_description: str | None = Field(default=None, max_length=5000)
     has_parking: bool | None = None
     parking_description: str | None = Field(default=None, max_length=5000)
-    rent_price: float | None = Field(default=None, ge=0)
+    rent_price: float | None = Field(default=None, ge=0, le=999999999999.99)
     services_included: str | None = Field(default=None, pattern="^(incluye|no_incluye)$")
     nomenclatura: str | None = Field(default=None, max_length=240)
     visiting_hours: list[dict] | None = None
@@ -822,7 +935,7 @@ async def upload_image(
     description: str = Form(""),
     group: str = Form("general"),
     extra_name: str = Form(""),
-    user: AdminUser = Depends(require_permission("properties.images")),
+    user: AdminUser = Depends(require_permission("images.create")),
 ):
     if len(name) > 200:
         raise HTTPException(422, "El nombre de la imagen no puede exceder 200 caracteres")
@@ -928,7 +1041,7 @@ async def get_image(property_id: str, filename: str):
 @app.delete("/properties/{property_id}/images/{filename}")
 async def remove_image(
     property_id: str, filename: str, request: Request,
-    user: AdminUser = Depends(require_permission("properties.images")),
+    user: AdminUser = Depends(require_permission("images.delete")),
 ):
     async with AsyncSessionLocal() as session:
         prop = await prop_repo.get_property(session, property_id)
@@ -962,7 +1075,7 @@ async def remove_image(
 @app.post("/properties/{property_id}/images/reorder")
 async def reorder_images(
     property_id: str, request: Request,
-    user: AdminUser = Depends(require_permission("properties.images")),
+    user: AdminUser = Depends(require_permission("images.update")),
 ):
     try:
         body = await request.json()
@@ -1001,7 +1114,7 @@ async def reorder_images(
 @app.patch("/properties/{property_id}/images/{filename}/cover")
 async def make_cover(
     property_id: str, filename: str, request: Request,
-    user: AdminUser = Depends(require_permission("properties.images")),
+    user: AdminUser = Depends(require_permission("images.update")),
 ):
     async with AsyncSessionLocal() as session:
         prop = await prop_repo.get_property(session, property_id)
@@ -1043,7 +1156,7 @@ async def make_cover(
 @app.patch("/properties/{property_id}/images/{filename}")
 async def update_image_metadata(
     property_id: str, filename: str, request: Request,
-    user: AdminUser = Depends(require_permission("properties.images")),
+    user: AdminUser = Depends(require_permission("images.update")),
 ):
     """Actualiza nombre/descripción/grupo de una imagen.
 
@@ -1138,7 +1251,7 @@ async def property_slots(property_id: str, days: int = 7):
 
 # ------------------------------------------------------------------ documents
 @app.get("/documents")
-async def list_documents():
+async def list_documents(user: AdminUser = Depends(require_permission("documents.read"))):
     async with AsyncSessionLocal() as session:
         docs = (await session.execute(select(Document).order_by(Document.created_at.desc()))).scalars().all()
     return {"count": len(docs), "documents": [d.to_dict() for d in docs]}
@@ -1170,7 +1283,10 @@ async def upload_document(
 
 
 @app.post("/documents/{document_id}/process")
-async def process_document(document_id: str):
+async def process_document(
+    document_id: str,
+    user: AdminUser = Depends(require_permission("documents.create")),
+):
     async with AsyncSessionLocal() as session:
         try:
             doc = await rag_ingest.process_document(session, uuid_mod.UUID(document_id))
@@ -1183,7 +1299,10 @@ async def process_document(document_id: str):
 
 
 @app.delete("/documents/{document_id}")
-async def delete_document(document_id: str):
+async def delete_document(
+    document_id: str,
+    user: AdminUser = Depends(require_permission("documents.delete")),
+):
     import os
 
     async with AsyncSessionLocal() as session:
@@ -1216,7 +1335,7 @@ def _lead_dict(l: Lead, assigned_name: str | None = None) -> dict:
 
 @app.get("/leads")
 async def list_leads(
-    limit: int = 200,
+    limit: int = Query(default=200, ge=0, le=500),
     user: AdminUser = Depends(require_permission("leads.read")),
 ):
     async with AsyncSessionLocal() as session:
@@ -1238,7 +1357,7 @@ async def list_leads(
 
 @app.get("/conversations")
 async def list_conversations(
-    limit: int = 100,
+    limit: int = Query(default=100, ge=0, le=200),
     user: AdminUser = Depends(require_permission("conversations.read")),
 ):
     async with AsyncSessionLocal() as session:
@@ -1334,7 +1453,7 @@ def _appt_dict(a: Appointment) -> dict:
 
 @app.get("/appointments")
 async def list_appointments(
-    status: str | None = None, limit: int = 200,
+    status: str | None = None, limit: int = Query(default=200, ge=0, le=500),
     user: AdminUser = Depends(require_permission("appointments.read")),
 ):
     if status:
@@ -1396,6 +1515,13 @@ async def create_appointment(
             await session.commit()
         except appts_service.SlotUnavailable as e:
             raise HTTPException(409, str(e))
+        except appts_service.OutsideBusinessHours as e:
+            raise HTTPException(422, str(e))
+        except IntegrityError:
+            # Carrera entre dos reservas simultáneas: el índice único parcial
+            # (property_id, scheduled_at) para citas activas deja pasar una sola.
+            await session.rollback()
+            raise HTTPException(409, "El horario acaba de ser reservado por otra solicitud.")
     await _audit(request, user, "appointment.created", "appointment", str(appt.id),
                  metadata={"property_id": str(appt.property_id), "scheduled_at": appt.scheduled_at.isoformat()})
     return _appt_dict(appt)
@@ -1433,6 +1559,11 @@ async def patch_appointment(
                 await appts_service.reschedule_appointment(session, appt.id, scheduled_at)
             except appts_service.SlotUnavailable as e:
                 raise HTTPException(409, str(e))
+            except appts_service.OutsideBusinessHours as e:
+                raise HTTPException(422, str(e))
+            except IntegrityError:
+                await session.rollback()
+                raise HTTPException(409, "El horario acaba de ser reservado por otra solicitud.")
         if data.duration_minutes is not None:
             appt.duration_minutes = data.duration_minutes
         if data.notes is not None:
@@ -1837,7 +1968,10 @@ async def delete_cms_content(
 # ------------------------------------------------------------------ audit log
 @app.get("/audit-log")
 async def list_audit_log(
-    limit: int = 50, offset: int = 0, action: str | None = None, entity: str | None = None,
+    limit: int = Query(default=50, ge=0, le=200),
+    offset: int = Query(default=0, ge=0),
+    action: str | None = None,
+    entity: str | None = None,
     user: AdminUser = Depends(require_permission("audit.read")),
 ):
     async with AsyncSessionLocal() as session:
@@ -1870,7 +2004,10 @@ async def list_audit_log(
 
 @app.get("/ai-events")
 async def list_ai_events(
-    limit: int = 100, offset: int = 0, status: str | None = None, intent: str | None = None,
+    limit: int = Query(default=100, ge=0, le=200),
+    offset: int = Query(default=0, ge=0),
+    status: str | None = None,
+    intent: str | None = None,
     user: AdminUser = Depends(require_permission("audit.read")),
 ):
     async with AsyncSessionLocal() as session:
@@ -1898,12 +2035,27 @@ async def list_ai_events(
 
 
 # ------------------------------------------------------------------ CSV exports
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value) -> str:
+    """Neutraliza la inyección de fórmulas CSV (CWE-1236).
+
+    Un valor que empieza con = + - @ (o tab/CR) puede ejecutarse como fórmula
+    al abrir el CSV en Excel/Sheets. Se antepone `'` para forzar texto plano.
+    """
+    s = "" if value is None else str(value)
+    if s[:1] in _CSV_FORMULA_PREFIXES:
+        return f"'{s}"
+    return s
+
+
 def _csv_response(rows: list[dict], headers: list[str], filename: str) -> Response:
     buf = io.StringIO()
     buf.write("\ufeff")  # BOM: Excel detecta UTF-8
     writer = csv.DictWriter(buf, fieldnames=headers, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows([{k: _csv_safe(v) for k, v in row.items()} for row in rows])
     content = buf.getvalue().encode("utf-8")
     return Response(
         content=content, media_type="text/csv; charset=utf-8",

@@ -172,3 +172,173 @@ async def test_schedule_visit_with_malformed_datetime(session, user_id):
         ctx,
     )
     assert not res["ok"] and res.get("error")
+
+
+# ---------------------------------------------------------------- RBAC vs rutas
+def test_route_permissions_are_covered_by_rbac_matrix():
+    """Los strings de permiso que usan las rutas deben estar cubiertos por la
+    matriz de roles: un permiso huérfano dejaría la ruta solo para superadmin
+    (regresión del bug `properties.images`, que nadie tenía asignado)."""
+    from app.database.models import AdminRole
+    from app.security.auth import has_permission
+
+    # Imágenes: ADMIN/EDITOR tienen images.*, ASESOR solo lectura.
+    for role in (AdminRole.ADMIN, AdminRole.EDITOR):
+        for perm in ("images.create", "images.update", "images.delete"):
+            assert has_permission(role, perm), f"{role.value} debería tener {perm}"
+    assert has_permission(AdminRole.ASESOR, "images.read")
+    assert not has_permission(AdminRole.ASESOR, "images.delete")
+
+    # Documentos: SUPERADMIN/ADMIN tienen documents.*.
+    for role in (AdminRole.SUPERADMIN, AdminRole.ADMIN):
+        for perm in ("documents.read", "documents.create", "documents.delete"):
+            assert has_permission(role, perm), f"{role.value} debería tener {perm}"
+
+    # EDITOR: lee y crea documentos, pero no puede borrarlos.
+    assert has_permission(AdminRole.EDITOR, "documents.read")
+    assert has_permission(AdminRole.EDITOR, "documents.create")
+    assert not has_permission(AdminRole.EDITOR, "documents.delete")
+
+
+def test_jwt_secret_is_not_the_public_default():
+    """El secreto de firma JWT no puede ser el default del código (público):
+    cualquiera podría firmar tokens de superadmin. conftest/CI pueden fijar
+    su propio valor; este test protege el arranque real (main.py falla en
+    production si sigue el default)."""
+    import os
+
+    from app.core.settings import get_settings
+
+    if os.environ.get("APP_ENV") == "production":
+        assert get_settings().JWT_SECRET != "changeme-jwt-secret"
+
+
+# ---------------------------------------------------------------- hardening HTTP
+async def _http_client():
+    import httpx
+
+    from app.api import routes
+
+    transport = httpx.ASGITransport(app=routes.app)
+    return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+
+async def test_security_headers_present_on_responses():
+    """Toda respuesta emite cabeceras de seguridad básicas (nosniff evita que
+    un archivo subido se interprete como HTML/script al servirse)."""
+    async with await _http_client() as c:
+        r = await c.get("/health")
+    assert r.status_code == 200
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert r.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+    # HSTS solo tiene sentido con HTTPS real (production)
+    assert "strict-transport-security" not in r.headers
+
+
+async def test_hsts_header_in_production(monkeypatch):
+    """En production se emite HSTS; en desarrollo no."""
+    import httpx
+
+    from app.api import routes
+    from app.core.settings import get_settings
+
+    real = get_settings
+    s = real()
+    monkeypatch.setattr(
+        routes, "get_settings", lambda: s.model_copy(update={"APP_ENV": "production"})
+    )
+    try:
+        transport = httpx.ASGITransport(app=routes.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.get("/health")
+        assert r.headers.get("strict-transport-security") == "max-age=31536000; includeSubDomains"
+    finally:
+        monkeypatch.setattr(routes, "get_settings", real)
+
+
+def test_openapi_and_docs_disabled_in_production(monkeypatch):
+    """En producción el mapa de endpoints (Swagger/ReDoc/openapi.json) no se
+    expone; en desarrollo sigue disponible."""
+    from app.api import routes
+    from app.core.settings import get_settings
+
+    real = get_settings
+    s = real()
+    monkeypatch.setattr(
+        routes, "get_settings", lambda: s.model_copy(update={"APP_ENV": "production"})
+    )
+    try:
+        kwargs = routes._fastapi_kwargs()
+        assert kwargs["docs_url"] is None
+        assert kwargs["redoc_url"] is None
+        assert kwargs["openapi_url"] is None
+    finally:
+        monkeypatch.setattr(routes, "get_settings", real)
+    assert routes._fastapi_kwargs()["docs_url"] == "/docs"
+    assert routes._fastapi_kwargs()["openapi_url"] == "/openapi.json"
+
+
+# ---------------------------------------------------------------- CSV formula injection
+def test_csv_safe_neutralizes_formula_prefixes():
+    """CWE-1236: un valor que empieza por = + - @ se antepone ' para que
+    Excel/Sheets lo trate como texto y no como fórmula."""
+    from app.api.routes import _csv_safe
+
+    assert _csv_safe("=cmd|' /C calc'!A0").startswith("'=")
+    assert _csv_safe("+1").startswith("'+")
+    assert _csv_safe("-2").startswith("'-")
+    assert _csv_safe("@suma").startswith("'@")
+    assert _csv_safe("\ttab").startswith("'\t")
+    assert _csv_safe("hola") == "hola"
+    assert _csv_safe(None) == ""
+
+
+async def test_leads_csv_export_neutralizes_formulas(admin_token):
+    """Integración: notas controladas por un usuario final (inyectadas vía bot)
+    salen neutralizadas en el export CSV que abre el asesor."""
+    from app.api import routes
+    from app.database.base import AsyncSessionLocal
+    from app.database.models import Lead
+    from app.memory import service as memory_service
+    from sqlalchemy import delete as sa_delete
+
+    async with AsyncSessionLocal() as session:
+        await memory_service.get_or_create_user(session, 987654321, "csv", "Test")
+        lead = Lead(user_id=987654321, name="=cmd|' /C calc'!A0", notes="=1+1", phone="123456")
+        session.add(lead)
+        await session.commit()
+        lead_id = lead.id
+    try:
+        async with await _http_client() as c:
+            r = await c.get("/export/leads.csv", headers=admin_token())
+        assert r.status_code == 200
+        assert "'=cmd" in r.text
+        assert "'=1+1" in r.text
+    finally:
+        async with AsyncSessionLocal() as session:
+            await session.execute(sa_delete(Lead).where(Lead.id == lead_id))
+            await session.commit()
+
+
+# ---------------------------------------------------------------- upload hardening
+def test_save_property_image_rejects_html_polyglot():
+    """Un upload con extensión de imagen pero contenido HTML/script no se
+    guarda (bloqueado en origen; nosniff al servir como segunda capa)."""
+    with pytest.raises(ValueError):
+        save_property_image(str(uuid_mod.uuid4()), b"<script>alert(1)</script>", "imagen.jpg")
+    with pytest.raises(ValueError):
+        save_property_image(str(uuid_mod.uuid4()), b"<!DOCTYPE html><html></html>", "pagina.jpg")
+
+
+# ------------------------------------------------------- revocación sin Redis
+async def test_revocation_memory_fallback(monkeypatch):
+    """Sin Redis disponible la denylist de refresh funciona en memoria
+    (un solo proceso): revocar → rechazado; jti desconocido → aceptado."""
+    import app.security.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "aioredis", None)
+    monkeypatch.setattr(auth_mod, "_revocation_redis", None)
+    assert await auth_mod.is_refresh_token_revoked("desconocido") is False
+    await auth_mod.revoke_refresh_token("abc123-fallback", 60)
+    assert await auth_mod.is_refresh_token_revoked("abc123-fallback") is True

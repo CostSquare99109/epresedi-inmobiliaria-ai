@@ -61,6 +61,8 @@ async def get_property_by_code(session: AsyncSession, code: str) -> Property | N
 
 
 async def get_properties(session: AsyncSession, ids: list[str] | None = None, limit: int = 50, offset: int = 0):
+    limit = max(0, min(limit, 200))
+    offset = max(0, offset)
     stmt = select(Property).order_by(Property.created_at.desc()).limit(limit).offset(offset)
     if ids:
         parsed = []
@@ -181,7 +183,8 @@ async def update_property(session: AsyncSession, property_id, data: dict) -> Pro
         "latitude", "longitude", "area_m2", "bedrooms", "bathrooms", "parking_spaces",
         "floors", "floor_offer_type", "offered_floors",
         "has_kitchen", "has_living_room", "has_laundry_area",
-        "features", "branch_id", "code",
+        "features", "branch_id",
+        # NOTE: "code" is intentionally NOT updatable (stable public identifier).
         # New detailed fields
         "bedrooms_description", "bathrooms_description", "living_room_description",
         "laundry_area_description", "has_parking", "parking_description",
@@ -364,7 +367,9 @@ async def list_properties_admin(
         stmt = stmt.where(*conds)
         count_stmt = count_stmt.where(*conds)
     total = (await session.execute(count_stmt)).scalar() or 0
-    stmt = stmt.order_by(Property.created_at.desc()).limit(min(limit, 200)).offset(offset)
+    limit = max(0, min(limit, 200))
+    offset = max(0, offset)
+    stmt = stmt.order_by(Property.created_at.desc()).limit(limit).offset(offset)
     props = (await session.execute(stmt)).scalars().all()
     return props, total
 

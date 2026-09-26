@@ -16,6 +16,41 @@ _SAFE_NAME = re.compile(r"^[\w.\-]+$", re.UNICODE)
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_IMAGE_STEM_LEN = 80
 
+# Marcadores de contenido HTML/script: un upload con extensión de imagen cuyo
+# contenido es HTML no debe guardarse (defensa en profundidad junto con
+# nosniff al servir; el poliglota HTML-en-JPG queda bloqueado en origen).
+_HTML_CONTENT_MARKERS = ("<script", "<!doctype html", "<html")
+
+
+def _looks_like_html(data: bytes) -> bool:
+    head = data[:1024].lower()
+    return any(marker.encode() in head for marker in _HTML_CONTENT_MARKERS)
+
+
+def _is_real_image(data: bytes) -> bool:
+    """Verifica la firma/contenido real de imagen (no solo la extensión).
+
+    Rechaza archivos vacíos, aleatorios o corruptos aunque tengan extensión
+    válida y no contengan marcadores HTML. Solo JPEG/PNG/WEBP.
+    """
+    if not data:
+        return False
+    if data[:2] != b"\xff\xd8":  # JPEG SOI
+        png_sig = b"\x89PNG\r\n\x1a\n"
+        riff_webp = data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+        if not (data[:8] == png_sig or riff_webp):
+            return False
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        with Image.open(BytesIO(data)) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
 
 def sanitize_image_stem(raw: str | None) -> str:
     """Limpia un nombre dado por el usuario para usarlo como nombre de archivo.
@@ -88,6 +123,10 @@ def save_property_image(
     ext = Path(original_name).suffix.lower()
     if ext not in ALLOWED_IMAGE_EXT:
         raise ValueError(f"Extensión de imagen no permitida: {ext}")
+    if _looks_like_html(data):
+        raise ValueError("El contenido del archivo no parece una imagen válida")
+    if not _is_real_image(data):
+        raise ValueError("El contenido del archivo no es una imagen válida (vacía o corrupta)")
     limit = max_mb if max_mb is not None else get_settings().MAX_UPLOAD_MB
     if len(data) > limit * 1024 * 1024:
         raise ValueError(f"Imagen demasiado grande (máximo {limit} MB)")

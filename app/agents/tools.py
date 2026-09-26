@@ -1075,7 +1075,9 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
     elif name == "cancel_appointment":
         ok = False
         try:
-            ok = await appt_service.cancel_appointment(session, uuid_mod.UUID(str(args.get("appointment_id"))))
+            ok = await appt_service.cancel_appointment(
+                session, uuid_mod.UUID(str(args.get("appointment_id"))), user_scope=ctx.user_id
+            )
         except (ValueError, AttributeError, TypeError):
             pass
         result = {"ok": True, "cancelled": ok}
@@ -1161,7 +1163,7 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
         except (ValueError, TypeError):
             result = {"ok": False, "error": "appointment_id o datetime_iso inválido."}
         else:
-            current = await appt_service.get_appointment(session, appt_id)
+            current = await appt_service.get_appointment_for_user(session, appt_id, user_scope=ctx.user_id)
             if current is None:
                 result = {"ok": False, "error": "Cita no encontrada."}
             else:
@@ -1170,7 +1172,9 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
                     result = invalid_slot
                 else:
                     try:
-                        appt = await appt_service.reschedule_appointment(session, appt_id, when)
+                        appt = await appt_service.reschedule_appointment(
+                            session, appt_id, when, user_scope=ctx.user_id
+                        )
                     except appt_service.SlotUnavailable as e:
                         result = {"ok": False, "error": str(e)}
                     else:

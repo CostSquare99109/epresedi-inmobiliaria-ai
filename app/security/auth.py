@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import time
+import uuid as uuid_mod
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, HTTPException, Request, status
@@ -24,6 +26,7 @@ class TokenData(BaseModel):
     email: str
     role: str
     exp: int
+    jti: str = ""  # solo refresh tokens; "" = legacy sin identificar (se rechaza)
 
 
 class TokenPair(BaseModel):
@@ -67,7 +70,8 @@ def create_refresh_token(data: dict) -> str:
     s = get_settings()
     to_encode = data.copy()
     expire = datetime.now(UTC) + timedelta(days=s.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "type": "refresh"})
+    # jti único por emisión: permite revocación y rotación de un solo uso (SEC-11).
+    to_encode.update({"exp": expire, "type": "refresh", "jti": uuid_mod.uuid4().hex})
     return jwt.encode(to_encode, s.JWT_SECRET, algorithm=s.JWT_ALGORITHM)
 
 
@@ -100,11 +104,78 @@ def decode_refresh_token(token: str) -> TokenData | None:
             email=payload.get("email", ""),
             role=payload.get("role", ""),
             exp=payload.get("exp", 0),
+            jti=payload.get("jti", ""),
         )
     except jwt.ExpiredSignatureError:
         return None
     except jwt.JWTError:
         return None
+
+
+# ------------------------------------------------- revocación de refresh (SEC-11)
+try:
+    import redis.asyncio as aioredis
+except Exception:  # pragma: no cover - sin cliente redis instalado
+    aioredis = None
+
+_revocation_redis = None
+# Fallback en memoria (un solo proceso): jti -> timestamp de expiración (wall clock).
+_revoked_memory: dict[str, float] = {}
+
+
+def _get_revocation_redis():
+    global _revocation_redis
+    if _revocation_redis is not None:
+        return _revocation_redis
+    if aioredis is None:
+        return None
+    try:
+        _revocation_redis = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
+    except Exception:
+        _revocation_redis = None
+    return _revocation_redis
+
+
+def _revocation_key(jti: str) -> str:
+    return f"revoked:refresh:{jti}"
+
+
+async def revoke_refresh_token(jti: str, ttl_seconds: int) -> None:
+    """Añade un jti a la denylist hasta que el token expire (TTL = vida restante)."""
+    if not jti or ttl_seconds <= 0:
+        return
+    client = _get_revocation_redis()
+    if client is not None:
+        try:
+            await client.setex(_revocation_key(jti), int(ttl_seconds), "1")
+            return
+        except Exception:
+            pass  # redis caído → fallback en memoria
+    _revoked_memory[jti] = time.time() + ttl_seconds
+
+
+async def is_refresh_token_revoked(jti: str) -> bool:
+    """True si el jti fue revocado (logout o rotación ya consumida)."""
+    if not jti:
+        return True  # sin jti no es identificable → no confiable
+    client = _get_revocation_redis()
+    if client is not None:
+        try:
+            return bool(await client.exists(_revocation_key(jti)))
+        except Exception:
+            pass  # redis caído → fallback en memoria
+    expiry = _revoked_memory.get(jti)
+    if expiry is None:
+        return False
+    if expiry <= time.time():
+        _revoked_memory.pop(jti, None)  # limpieza oportunista de expirados
+        return False
+    return True
+
+
+def refresh_token_ttl_seconds(token_data: TokenData) -> int:
+    """Vida restante del refresh en segundos (para dimensionar la denylist)."""
+    return max(1, int(token_data.exp) - int(time.time()))
 
 
 async def get_admin_user(session: AsyncSession, user_id: str) -> AdminUser | None:

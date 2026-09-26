@@ -71,6 +71,15 @@ class Settings(BaseSettings):
 
     # ux
     RATE_LIMIT_PER_MINUTE: int = 20
+    # Lectura pública (anti-DoS): presupuesto por IP/min para el inventario público.
+    RATE_LIMIT_PUBLIC_PER_MINUTE: int = 300
+    # CSRF: orígenes permitidos para mutaciones con Origin/Referer (panel admin).
+    # El navegador siempre envía Origin en POST/PUT/PATCH/DELETE fetch; si el
+    # origen no está aquí se responde 403. Sin Origin/Referer (curl, tests) pasa.
+    CSRF_TRUSTED_ORIGINS: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:8000,http://127.0.0.1:8000"
+    )
 
     # web search tool (agent decides when to use it; disabled = honest error)
     WEB_SEARCH_ENABLED: bool = True

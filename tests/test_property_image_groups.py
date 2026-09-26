@@ -24,6 +24,17 @@ async def client():
         yield c
 
 
+def _real_jpg() -> bytes:
+    """JPEG mínimo válido (los uploads exigen imagen real, no bytes falsos)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (4, 4), "blue").save(buf, format="JPEG")
+    return buf.getvalue()
+
+
 async def _create_property(client, headers, title="Casa de prueba grupos"):
     r = await client.post(
         "/properties",
@@ -57,7 +68,7 @@ def test_save_collision_uses_spec_naming(tmp_path, monkeypatch):
         lambda: SimpleNamespace(storage_dir=tmp_path, MAX_UPLOAD_MB=15),
     )
     pid = str(uuid_mod.uuid4())
-    data = b"fake-bytes"
+    data = _real_jpg()
     first = img_files.save_property_image(pid, data, "x.jpg", preferred_name="Baño")
     second = img_files.save_property_image(pid, data, "x.jpg", preferred_name="Baño")
     third = img_files.save_property_image(pid, data, "x.jpg", preferred_name="Baño")
@@ -92,7 +103,7 @@ async def test_upload_list_filter_and_metadata_by_group(client, admin_token):
             data["extra_name"] = extra_name
         r = await client.post(
             f"/properties/{pid}/images",
-            files={"file": (fname, b"fake-image-bytes", "image/jpeg")},
+            files={"file": (fname, _real_jpg(), "image/jpeg")},
             data=data,
             headers=headers,
         )
@@ -131,7 +142,7 @@ async def test_upload_list_filter_and_metadata_by_group(client, admin_token):
     # Extra sin nombre se rechaza
     r = await client.post(
         f"/properties/{pid}/images",
-        files={"file": ("e.jpg", b"fake", "image/jpeg")},
+        files={"file": ("e.jpg", _real_jpg(), "image/jpeg")},
         data={"name": "X", "group": "extra"},
         headers=headers,
     )

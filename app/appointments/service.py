@@ -15,7 +15,7 @@ from app.core.bizconfig import (
     is_within_business_hours,
 )
 from app.core.logging import get_logger
-from app.database.models import Appointment, AppointmentStatus
+from app.database.models import Appointment, AppointmentStatus, Lead
 
 log = get_logger(__name__)
 
@@ -190,12 +190,26 @@ async def list_available_slots(
     }
 
 
+MIN_ADVANCE_HOURS = 2
+
+
 async def validate_business_hours(scheduled_at: dt.datetime) -> None:
-    """Validates that a datetime falls within business hours.
-    
-    Raises OutsideBusinessHours if not within business hours.
+    """Validates that a datetime is bookable: future, minimum advance, business hours.
+
+    Raises OutsideBusinessHours if not bookable (reason: past | too_soon | outside).
     """
     scheduled_at_utc = await _to_utc(scheduled_at)
+    now_utc = dt.datetime.now(dt.UTC)
+    if scheduled_at_utc <= now_utc:
+        raise OutsideBusinessHours(
+            "No se puede agendar en el pasado.",
+            reason="past",
+        )
+    if scheduled_at_utc <= now_utc + dt.timedelta(hours=MIN_ADVANCE_HOURS):
+        raise OutsideBusinessHours(
+            f"Se requiere al menos {MIN_ADVANCE_HOURS} horas de anticipación.",
+            reason="too_soon",
+        )
     is_within, reason = await is_within_business_hours(scheduled_at_utc)
     if not is_within:
         raise OutsideBusinessHours(
@@ -241,10 +255,28 @@ async def create_appointment(
     return appt
 
 
-async def cancel_appointment(session: AsyncSession, appointment_id, user_scope: int | None = None) -> bool:
-    appt = (await session.execute(
+async def get_appointment(session: AsyncSession, appointment_id) -> Appointment | None:
+    return (await session.execute(
         select(Appointment).where(Appointment.id == appointment_id)
     )).scalar_one_or_none()
+
+
+async def get_appointment_for_user(
+    session: AsyncSession, appointment_id, user_scope: int | None = None
+) -> Appointment | None:
+    """Cita por id; con ``user_scope`` solo si pertenece a ese usuario (vía su lead).
+
+    Los endpoints admin llaman sin scope (RBAC ya aplicado); el agente Telegram
+    SIEMPRE pasa el user_id del chat: un usuario no puede tocar citas ajenas.
+    """
+    stmt = select(Appointment).where(Appointment.id == appointment_id)
+    if user_scope is not None:
+        stmt = stmt.join(Lead, Appointment.lead_id == Lead.id).where(Lead.user_id == user_scope)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def cancel_appointment(session: AsyncSession, appointment_id, user_scope: int | None = None) -> bool:
+    appt = await get_appointment_for_user(session, appointment_id, user_scope=user_scope)
     if appt is None:
         return False
     if appt.status in (AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED):
@@ -265,15 +297,17 @@ APPOINTMENT_TRANSITIONS: dict[AppointmentStatus, set[AppointmentStatus]] = {
 
 
 async def reschedule_appointment(
-    session: AsyncSession, appointment_id, scheduled_at: dt.datetime
+    session: AsyncSession, appointment_id, scheduled_at: dt.datetime,
+    user_scope: int | None = None,
 ) -> Appointment | None:
-    """Reprograma una cita activa validando choque de horario (excluyéndose a sí misma)."""
+    """Reprograma una cita activa validando choque de horario (excluyéndose a sí misma).
+
+    Con ``user_scope`` la cita debe pertenecer a ese usuario (vía su lead).
+    """
     # Validate business hours first (defense in depth)
     await validate_business_hours(scheduled_at)
-    
-    appt = (await session.execute(
-        select(Appointment).where(Appointment.id == appointment_id)
-    )).scalar_one_or_none()
+
+    appt = await get_appointment_for_user(session, appointment_id, user_scope=user_scope)
     if appt is None:
         return None
     if appt.status in (AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED):
@@ -300,9 +334,3 @@ async def list_appointments(session: AsyncSession, lead_id: uuid_mod.UUID | None
     if lead_id:
         stmt = stmt.where(Appointment.lead_id == lead_id)
     return (await session.execute(stmt)).scalars().all()
-
-
-async def get_appointment(session: AsyncSession, appointment_id) -> Appointment | None:
-    return (await session.execute(
-        select(Appointment).where(Appointment.id == appointment_id)
-    )).scalar_one_or_none()
