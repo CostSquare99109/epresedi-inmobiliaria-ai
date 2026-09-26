@@ -127,40 +127,40 @@ PROPERTIES += [
      "status": "AVAILABLE",
      "features": ["garaje", "patio", "mascotas"],
      "description": "Casa amplia con patio, apta para mascotas."},
-    {"code": "PROP-0010", "title": "Lote urbano esquinero",
-     "property_type": "lote", "operation": "SALE", "price": 95_000_000, "price_period": "",
+    {"code": "PROP-0010", "title": "Casa familiar con antejardín",
+     "property_type": "casa", "operation": "SALE", "price": 195_000_000, "price_period": "",
      "city": "Carepa", "neighborhood": "Villa Fátima", "address": "Calle 28 con Carrera 11",
      "street": "Calle 28", "street_number": "con Carrera 11", "descriptive_location": "Esquina, todos los servicios",
-     "area_m2": 250, "bedrooms": 0, "bathrooms": 0, "parking_spaces": 0, "floors": 0,
-     "has_kitchen": False, "has_living_room": False, "has_laundry_area": False,
+     "area_m2": 120, "bedrooms": 3, "bathrooms": 2, "parking_spaces": 1, "floors": 1,
+     "has_kitchen": True, "has_living_room": True, "has_laundry_area": True,
      "status": "AVAILABLE", "features": ["esquinero"],
-     "description": "Lote plano con todos los servicios, ideal para construccion de vivienda."},
-    {"code": "PROP-0011", "title": "Local comercial sobre vía principal",
-     "property_type": "local", "operation": "SALE", "price": 310_000_000, "price_period": "",
+     "description": "Casa esquinera con antejardín y todos los servicios."},
+    {"code": "PROP-0011", "title": "Apartamento céntrico sobre vía principal",
+     "property_type": "apartamento", "operation": "SALE", "price": 310_000_000, "price_period": "",
      "city": "Carepa", "neighborhood": "El Centro", "address": "Calle 45 #21-01",
      "street": "Calle 45", "street_number": "#21-01", "descriptive_location": "Frente a vía principal, alto tráfico",
-     "area_m2": 80, "bedrooms": 0, "bathrooms": 1, "parking_spaces": 0, "floors": 1,
-     "has_kitchen": False, "has_living_room": False, "has_laundry_area": False,
+     "area_m2": 80, "bedrooms": 2, "bathrooms": 1, "parking_spaces": 0, "floors": 1,
+     "has_kitchen": True, "has_living_room": True, "has_laundry_area": False,
      "status": "AVAILABLE", "features": ["alto trafico"],
-     "description": "Local con vitrina sobre la vía principal, ideal para retail."},
-    {"code": "PROP-0012", "title": "Oficina ejecutiva Centro Empresarial",
-     "property_type": "oficina", "operation": "SALE", "price": 210_000_000, "price_period": "",
+     "description": "Apartamento céntrico sobre la vía principal, ideal para vivir cerca de todo."},
+    {"code": "PROP-0012", "title": "Apartamento ejecutivo Centro Empresarial",
+     "property_type": "apartamento", "operation": "SALE", "price": 210_000_000, "price_period": "",
      "city": "Carepa", "neighborhood": "El Centro", "address": "Calle 45 #21-05",
-     "street": "Calle 45", "street_number": "#21-05", "descriptive_location": "Torre A, piso 3, recepción",
-     "area_m2": 55, "bedrooms": 0, "bathrooms": 1, "parking_spaces": 0, "floors": 1,
-     "has_kitchen": False, "has_living_room": True, "has_laundry_area": False,
+     "street": "Calle 45", "street_number": "#21-05", "descriptive_location": "Torre A, piso 3",
+     "area_m2": 55, "bedrooms": 2, "bathrooms": 1, "parking_spaces": 0, "floors": 1,
+     "has_kitchen": True, "has_living_room": True, "has_laundry_area": False,
            "status": "AVAILABLE",
      "features": ["vigilancia", "cerca al centro"],
-     "description": "Oficina en tercer piso con recepción y sala de juntas."},
-    {"code": "PROP-0013", "title": "Finca productiva con fuente de agua",
-     "property_type": "finca", "operation": "SALE", "price": 650_000_000, "price_period": "",
+     "description": "Apartamento en tercer piso con sala de estar y buena iluminación."},
+    {"code": "PROP-0013", "title": "Casa campestre con fuente de agua",
+     "property_type": "casa", "operation": "SALE", "price": 650_000_000, "price_period": "",
      "city": "Carepa", "neighborhood": "Zona Rural Norte", "address": "Vía Apartadó km 4",
-     "street": "Vía Apartadó", "street_number": "km 4", "descriptive_location": "Finca con nacimiento de agua",
-     "area_m2": 12000, "bedrooms": 2, "bathrooms": 2, "parking_spaces": 0, "floors": 1,
-     "has_kitchen": True, "has_living_room": True, "has_laundry_area": False,
+     "street": "Vía Apartadó", "street_number": "km 4", "descriptive_location": "Casa con nacimiento de agua",
+     "area_m2": 150, "bedrooms": 4, "bathrooms": 3, "parking_spaces": 2, "floors": 2,
+     "has_kitchen": True, "has_living_room": True, "has_laundry_area": True,
      "status": "AVAILABLE",
      "features": ["nacimiento de agua", "potrero"],
-     "description": "Finca ganadera con casa de administracion y establo."},
+     "description": "Casa campestre con nacimiento de agua y zona verde amplia."},
     {"code": "PROP-0014", "title": "Casa vendida en conjunto cerrado",
      "property_type": "casa", "operation": "SALE", "price": 295_000_000, "price_period": "",
      "city": "Carepa", "neighborhood": "La Esperanza", "address": "Carrera 10 #15-33",
@@ -349,10 +349,10 @@ async def seed() -> dict:
         branch = Branch(
             name="Sede Principal",
             city="Carepa",
-            neighborhood="El Centro",
+            neighborhood="Calazans",
             street="Calle 70",
             street_number="# 68A - 11",
-            descriptive_location="Sede principal en el centro de Carepa",
+            descriptive_location="1er piso, Diagonal a Tiendas Ara",
             is_active=True,
         )
         session.add(branch)
@@ -399,24 +399,42 @@ async def seed() -> dict:
                     description=f"Foto {_name.lower()} de {p.title}.", group=_group,
                 )
 
-        # Create default business hours (global)
+        # Create default business hours (global) - Mon-Fri: 08:00-12:00, 14:00-18:00; Sat: 08:00-15:00; Sun: closed
+        # Using multiple intervals per day for Mon-Fri (morning + afternoon)
         default_hours = [
-            (0, False, "08:00", "18:00"),  # Monday
-            (1, False, "08:00", "18:00"),  # Tuesday
-            (2, False, "08:00", "18:00"),  # Wednesday
-            (3, False, "08:00", "18:00"),  # Thursday
-            (4, False, "08:00", "18:00"),  # Friday
-            (5, False, "09:00", "15:00"),  # Saturday
-            (6, True, None, None),         # Sunday (closed)
+            # Monday - morning
+            (0, False, "08:00", "12:00", 0),
+            # Monday - afternoon
+            (0, False, "14:00", "18:00", 1),
+            # Tuesday - morning
+            (1, False, "08:00", "12:00", 0),
+            # Tuesday - afternoon
+            (1, False, "14:00", "18:00", 1),
+            # Wednesday - morning
+            (2, False, "08:00", "12:00", 0),
+            # Wednesday - afternoon
+            (2, False, "14:00", "18:00", 1),
+            # Thursday - morning
+            (3, False, "08:00", "12:00", 0),
+            # Thursday - afternoon
+            (3, False, "14:00", "18:00", 1),
+            # Friday - morning
+            (4, False, "08:00", "12:00", 0),
+            # Friday - afternoon
+            (4, False, "14:00", "18:00", 1),
+            # Saturday - continuous
+            (5, False, "08:00", "15:00", 0),
+            # Sunday - closed
+            (6, True, None, None, 0),
         ]
-        for weekday, is_closed, open_t, close_t in default_hours:
+        for weekday, is_closed, open_t, close_t, interval_order in default_hours:
             bh = BusinessHour(
                 branch_id=None,  # global
                 weekday=weekday,
                 is_closed=is_closed,
                 open_time=open_t,
                 close_time=close_t,
-                interval_order=0,
+                interval_order=interval_order,
             )
             session.add(bh)
 

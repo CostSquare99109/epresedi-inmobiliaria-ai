@@ -109,7 +109,7 @@ def validate_phase_transition(current: str | None, new: str) -> tuple[bool, str]
 
 # ---------------------------------------------------------------- field specs
 
-PROPERTY_TYPES = ("casa", "apartamento", "lote", "local", "oficina", "finca", "proyecto")
+PROPERTY_TYPES = ("casa", "apartamento")
 OPERATIONS = ("SALE", "RENT")
 BOOKING_STATES = (
     "esperando_inicio", "mostrando_horarios", "esperando_horario", "esperando_datos",

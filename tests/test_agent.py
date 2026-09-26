@@ -29,8 +29,8 @@ from tests.test_fake_llm_v2 import (
     [
         ("Busco una casa en Carepa de máximo 300 millones, tres habitaciones, garaje y cerca del centro", Intent.SEARCH_PROPERTY),
         ("muéstrame apartamentos de 2 habitaciones hasta 150 millones", Intent.SEARCH_PROPERTY),
-        ("tienen lotes disponibles", Intent.SEARCH_PROPERTY),
-        ("quiero ver oficinas en Carepa", Intent.SEARCH_PROPERTY),
+        ("tienen casas disponibles", Intent.SEARCH_PROPERTY),
+        ("quiero ver apartamentos en Carepa", Intent.SEARCH_PROPERTY),
         ("la segunda", Intent.PROPERTY_DETAILS),
         ("la de 280 millones", Intent.PROPERTY_DETAILS),
         ("dime más", Intent.PROPERTY_DETAILS),

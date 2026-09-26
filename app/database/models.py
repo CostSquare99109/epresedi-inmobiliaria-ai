@@ -58,11 +58,6 @@ def sa_enum(enum_cls, **kw):
 class PropertyType(StrEnum):
     HOUSE = "casa"
     APARTMENT = "apartamento"
-    LOT = "lote"
-    STORE = "local"
-    OFFICE = "oficina"
-    FARM = "finca"
-    PROJECT = "proyecto"
 
 
 class Operation(StrEnum):

@@ -85,7 +85,7 @@ TOOL_SPECS: list[dict] = [
         "parameters": {"type": "object", "properties": {
             "intent": {"type": "string", "description": "Intención detectada (SEARCH_PROPERTY, PROPERTY_DETAILS, SCHEDULE_VISIT, ...)"},
             "operation": {"type": "string", "enum": ["SALE", "RENT"], "description": "Compra o arriendo"},
-            "property_type": {"type": "string", "enum": ["casa", "apartamento", "lote", "local", "oficina", "finca", "proyecto"]},
+            "property_type": {"type": "string", "enum": ["casa", "apartamento"]},
             "city": {"type": "string"},
             "neighborhood": {"type": "string"},
             "budget_min": {"type": "number", "description": "Presupuesto mínimo en COP"},
@@ -117,11 +117,15 @@ TOOL_SPECS: list[dict] = [
             "típico o 'razonable' cuando el usuario no dio presupuesto. Si el usuario dijo un "
             "presupuesto aproximado, envíalo en max_price; si no mencionó presupuesto, omite "
             "min_price y max_price por completo (busca sin tope de precio). Si no hubo resultados, "
-            "amplía criterios explícitamente y vuelve a llamar."
+            "amplía criterios explícitamente y vuelve a llamar. "
+            "REGLA PREVIA OBLIGATORIA: el inventario solo tiene casa y apartamento. Si el usuario "
+            "pidió otro tipo (finca, lote, bodega, local, oficina, parcela, proyecto, etc.), NO "
+            "llames esta tool ni muestres fichas de otro tipo: aclara primero que ese tipo no está "
+            "disponible y pregunta si quiere ver alternativas o que le avisemos."
         ),
         "parameters": {"type": "object", "properties": {
             "filters": {"type": "object", "description": "Filtros estructurados", "properties": {
-                "property_type": {"type": "string", "enum": ["casa", "apartamento", "lote", "local", "oficina", "finca", "proyecto"]},
+                "property_type": {"type": "string", "enum": ["casa", "apartamento"]},
                 "operation": {"type": "string", "enum": ["SALE", "RENT"]},
                 "city": {"type": "string"},
                 "min_price": {"type": "number"}, "max_price": {"type": "number"},
@@ -220,7 +224,7 @@ TOOL_SPECS: list[dict] = [
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string", "description": "Nombre descriptivo de la alerta (ej: 'Casas Carepa arriendo < 1.5M')"},
             "filters": {"type": "object", "description": "Criterios estructurados", "properties": {
-                "property_type": {"type": "string", "enum": ["casa", "apartamento", "lote", "local", "oficina", "finca", "proyecto"]},
+                "property_type": {"type": "string", "enum": ["casa", "apartamento"]},
                 "operation": {"type": "string", "enum": ["SALE", "RENT"]},
                 "city": {"type": "string"},
                 "min_price": {"type": "number"}, "max_price": {"type": "number"},
@@ -265,8 +269,8 @@ TOOL_SPECS: list[dict] = [
         "parameters": {"type": "object", "properties": {"alert_id": {"type": "string"}, "limit": {"type": "integer", "description": "Máximo resultados (default 50)"}}},
     }},
     {"type": "function", "function": {
-        "name": "create_lead", "description": "Crea/actualiza el lead del usuario con datos observables.",
-        "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "phone": {"type": "string"}, "budget": {"type": "number"}, "status": {"type": "string"}, "notes": {"type": "string"}}},
+        "name": "create_lead", "description": "Crea/actualiza el lead del usuario con datos observables. Incluye SIEMPRE el email cuando el usuario lo dé: es obligatorio para agendar.",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "phone": {"type": "string"}, "email": {"type": "string", "description": "Correo electrónico del usuario (obligatorio para agendar)"}, "budget": {"type": "number"}, "status": {"type": "string"}, "notes": {"type": "string"}}},
     }},
     {"type": "function", "function": {
         "name": "get_customer_profile", "description": "Perfil del cliente.", "parameters": {"type": "object", "properties": {}},
@@ -289,10 +293,14 @@ TOOL_SPECS: list[dict] = [
         "name": "schedule_visit",
         "description": (
             "CREA la cita solo si ya elegiste un slot real y el usuario confirmó. No la llames "
-            "para 'proponer': primero list_available_slots y espera la elección. Si la respuesta "
-            "no trae appointment, la cita NO existe: no la anuncies como agendada."
+            "para 'proponer': primero list_available_slots y espera la elección. Pasa SIEMPRE "
+            "name, phone y email con los datos de contacto que dio el usuario (son obligatorios; "
+            "si faltan, la tool devuelve MISSING_CONTACT_INFO y debes pedirlos, no decir "
+            "'problema técnico'). Si la respuesta no trae appointment, la cita NO existe: no la "
+            "anuncies como agendada. Si la respuesta SÍ trae appointment, la cita SÍ existe: "
+            "confírmala con esos datos reales, nunca digas que falló."
         ),
-        "parameters": {"type": "object", "properties": {"property_id": {"type": "string"}, "datetime_iso": {"type": "string"}, "notes": {"type": "string"}}},
+        "parameters": {"type": "object", "properties": {"property_id": {"type": "string"}, "datetime_iso": {"type": "string"}, "notes": {"type": "string"}, "name": {"type": "string", "description": "Nombre completo del usuario (mínimo nombre + apellido)"}, "phone": {"type": "string", "description": "Teléfono/celular del usuario"}, "email": {"type": "string", "description": "Correo electrónico del usuario"}}},
     }},
     {"type": "function", "function": {
         "name": "cancel_appointment", "description": "Cancela cita por id.",

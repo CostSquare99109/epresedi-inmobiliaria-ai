@@ -85,7 +85,7 @@ def validate_floor_offer(
             except (TypeError, ValueError):
                 raise ValueError("Número de pisos inválido: debe ser un entero positivo") from None
         if floors == 0:
-            # Legado: lotes y registros antiguos usan 0 como "no aplica".
+            # Legado: registros antiguos usan 0 como "no aplica".
             # Se normaliza a desconocido en escrituras nuevas; las filas
             # existentes con 0 se siguen leyendo sin romperse.
             floors = None

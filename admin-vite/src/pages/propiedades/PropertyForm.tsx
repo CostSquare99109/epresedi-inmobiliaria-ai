@@ -1081,7 +1081,7 @@ export function PropertyForm({ mode, initialData, propertyId }: PropertyFormProp
             )}
             {!isSale && uiChoice === "partial" && (
               <p className="form-hint" style={{ gridColumn: "1 / -1", margin: 0 }}>
-                Describe la parte ofertada (apartamento interior, anexo, local, habitación
+                Describe la parte ofertada (apartamento interior, anexo, habitación
                 independiente…) en la Descripción general de la propiedad.
               </p>
             )}

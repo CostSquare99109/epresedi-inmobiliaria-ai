@@ -24,11 +24,69 @@ NUMBER_WORDS = {
 
 TYPE_WORDS = {
     "casa": "casa", "casas": "casa", "apartamento": "apartamento", "apto": "apartamento",
-    "apartamentos": "apartamento", "lote": "lote", "lotecito": "lote", "terreno": "lote",
-    "terrenos": "lote", "local": "local", "locales": "local", "oficina": "oficina",
-    "oficinas": "oficina", "finca": "finca", "fincas": "finca", "proyecto": "proyecto",
-    "proyectos": "proyecto", "aptos": "apartamento",
+    "apartamentos": "apartamento", "aptos": "apartamento",
 }
+
+# Tipos que existen en el inventario real (única fuente: PropertyType casa/apartamento).
+# Todo lo demás que el usuario pida como "tipo" debe tratarse como no disponible.
+AVAILABLE_PROPERTY_TYPES = ("casa", "apartamento")
+
+# Términos de tipo que los usuarios piden pero NO existen en el inventario actual.
+# Si aparecen sin un tipo válido, el flujo debe ACLARAR, nunca mostrar otro tipo
+# como si calzara (ver extract_filters + detect_unsupported_type).
+UNSUPPORTED_TYPE_RE = re.compile(
+    r"\b(fincas?|lotes?|local(?:es)?(?:\s+comercial(?:es)?)?|"
+    r"bodegas?|oficinas?|proyectos?|parcelas?|cabanas?|chales?|chalets?|"
+    r"apartaestudios?|pent\s?houses?|duplex|triplex)\b"
+)
+
+
+def _canonical_unsupported(raw: str) -> str:
+    """Normaliza un match de UNSUPPORTED_TYPE_RE a su forma canónica singular."""
+    t = re.sub(r"\s+", " ", (raw or "").strip().lower())
+    if not t:
+        return t
+    if t.startswith("finca"):
+        return "finca"
+    if t.startswith("lote"):
+        return "lote"
+    if t.startswith("local"):
+        return "local comercial" if "comercial" in t else "local"
+    if t.startswith("bodega"):
+        return "bodega"
+    if t.startswith("oficina"):
+        return "oficina"
+    if t.startswith("proyecto"):
+        return "proyecto"
+    if t.startswith("parcela"):
+        return "parcela"
+    if t.startswith("cabana"):
+        return "cabana"
+    if t.startswith("chal"):
+        return "chalet"
+    if "apartaestudio" in t:
+        return "apartaestudio"
+    if "pent" in t:
+        return "penthouse"
+    if "duplex" in t:
+        return "duplex"
+    if "triplex" in t:
+        return "triplex"
+    return t
+
+
+def detect_unsupported_type(message: str) -> str | None:
+    """Devuelve el tipo no disponible mencionado (canónico) o None.
+
+    Fuente de verdad para ambas rutas (determinística y LLM-first):
+    ``extract_filters`` y el guard de ``run_tool(search_properties)`` usan
+    exactamente esta función para no divergir.
+    """
+    low = _deaccent((message or "").lower())
+    m = UNSUPPORTED_TYPE_RE.search(low)
+    if not m:
+        return None
+    return _canonical_unsupported(m.group(0))
 
 
 def _deaccent(s: str) -> str:
@@ -38,6 +96,10 @@ def _deaccent(s: str) -> str:
 @dataclass
 class SearchFilters:
     property_type: str | None = None
+    # Tipo pedido por el usuario que NO existe en el inventario (finca, lote, ...).
+    # Cuando está fijado, la búsqueda NO debe devolver propiedades de otro tipo:
+    # el flujo debe aclarar primero (ver extract_filters / search_properties).
+    unsupported_type: str | None = None
     operation: str | None = None
     city: str | None = None
     neighborhood: str | None = None
@@ -61,7 +123,7 @@ class SearchFilters:
     def to_dict(self) -> dict:
         d = {}
         for k in (
-            "property_type", "operation", "city", "neighborhood", "branch_id",
+            "property_type", "unsupported_type", "operation", "city", "neighborhood", "branch_id",
             "min_price", "max_price", "min_area", "bedrooms", "bathrooms", "parking",
             "floors", "floor_offer_type", "offered_floor",
             "has_kitchen", "has_living_room", "has_laundry_area",
@@ -76,7 +138,7 @@ class SearchFilters:
     @classmethod
     def from_dict(cls, d: dict) -> SearchFilters:
         known = {k: v for k, v in d.items() if k in {
-            "property_type", "operation", "city", "neighborhood", "branch_id",
+            "property_type", "unsupported_type", "operation", "city", "neighborhood", "branch_id",
             "min_price", "max_price", "min_area", "bedrooms", "bathrooms", "parking",
             "floors", "floor_offer_type", "offered_floor",
             "has_kitchen", "has_living_room", "has_laundry_area", "query_text",
@@ -85,6 +147,8 @@ class SearchFilters:
 
     def describe(self) -> str:
         parts = []
+        if self.unsupported_type:
+            parts.append(f"tipo '{self.unsupported_type}' no disponible")
         if self.operation == "RENT":
             parts.append("arriendo")
         if self.property_type:
@@ -141,7 +205,7 @@ PARK_ANY_RE = re.compile(r"\b(?:garaje|garaje|parqueadero|parqueaderos|parqueo|p
 OPERATION_RENT_RE = re.compile(r"\b(?:arriendo|arrendar|arrendad[oa]s?|alquiler|alquilar|alquilad[oa]s?|rentar|rentad[oa]s?|renta|en renta)\b")
 OPERATION_SALE_RE = re.compile(r"\b(?:venta|vender|comprar|compra|adquirir|en venta)\b")
 TYPE_RE = re.compile(
-    r"\b(casas?|apartamentos?|aptos?|lotes?|terrenos?|locales?|oficinas?|fincas?|proyectos?)\b"
+    r"\b(casas?|apartamentos?|aptos?)\b"
 )
 AREA_RE = re.compile(r"(?P<n>\d+)\s*(?:m2|mts2|metros\s*c[uú]adrados|metros)\b")
 
@@ -274,6 +338,17 @@ def extract_filters(message: str) -> tuple[SearchFilters, str]:
         filters.property_type = next(iter(distinct_types))
     for m in type_matches:
         consume(m)
+
+    # --- tipo no disponible en inventario (finca, lote, local comercial, ...) ---
+    # Si el usuario pide un tipo que NO existe en el inventario actual, NO se
+    # deja un filtro vacío que devolvería casas/apartamentos sin filtrar por
+    # tipo. Se marca unsupported_type ("tipo_no_disponible") para que el flujo
+    # pregunte/aclare en vez de mostrar propiedades de otro tipo.
+    unsupported_matches = list(UNSUPPORTED_TYPE_RE.finditer(low))
+    if unsupported_matches:
+        filters.unsupported_type = _canonical_unsupported(unsupported_matches[0].group(0))
+        for m in unsupported_matches:
+            consume(m)
 
     # --- area
     m = AREA_RE.search(low)
@@ -448,6 +523,14 @@ async def search_properties(
     session: AsyncSession, filters: SearchFilters, semantic: str | None = None
 ) -> list[PropertyHit]:
     """SQL filtering first, then ranking by full-text + vector + features."""
+    # Tipo no disponible: NO devolver propiedades de otro tipo como si calzaran.
+    # El flujo debe aclarar primero (el llamador informa tipo_no_disponible).
+    if filters.unsupported_type and not filters.property_type:
+        log.info(
+            "property_search_blocked_tipo_no_disponible unsupported=%s describe=%s",
+            filters.unsupported_type, filters.describe(),
+        )
+        return []
     params: dict = {"limit": filters.limit}
     where = _build_where(filters, params)
     semantic = semantic or filters.query_text
@@ -515,6 +598,10 @@ async def find_closest_properties(
     inventario restante por distancia real a precio/habitaciones/baños pedidos.
     Todo el cálculo vive aquí, en código — el LLM nunca decide ni inventa cuáles
     son "las más parecidas"."""
+    # Tipo no disponible: tampoco ofrecer "las más parecidas" de otro tipo en
+    # silencio. Primero hay que aclarar el tipo con el usuario.
+    if filters.unsupported_type and not filters.property_type:
+        return []
     candidate_filters = copy.copy(filters)
     candidate_filters.max_price = None
     candidate_filters.min_price = None

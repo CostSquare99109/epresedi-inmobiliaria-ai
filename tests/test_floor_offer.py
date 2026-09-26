@@ -49,7 +49,7 @@ def test_validate_acceptance_cases():
     # Legacy: sin datos nuevos -> propiedad completa por defecto
     assert validate_floor_offer(None, None, None) == (None, "full_property", [])
     assert validate_floor_offer(2, None, None) == (2, "full_property", [])
-    # Legado: 0 ("no aplica" en lotes antiguos) se normaliza a desconocido
+    # Legado: 0 ("no aplica" en registros antiguos) se normaliza a desconocido
     assert validate_floor_offer(0, None, None) == (None, "full_property", [])
 
 

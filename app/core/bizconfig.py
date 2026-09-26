@@ -21,19 +21,21 @@ TTL_SECONDS = 30
 _cache: dict[str, tuple[float, Any]] = {}
 
 # Default business hours by weekday (0=Monday, 6=Sunday)
-# Mon-Fri: 08:00-18:00, Sat: 09:00-15:00, Sun: closed
+# Mon-Fri: 08:00-12:00 and 14:00-18:00 (with 12:00-14:00 break)
+# Sat: 08:00-15:00, Sun: closed
+# Hours represent slot START times (each slot is 1 hour)
 DEFAULT_APPOINTMENT_HOURS_BY_WEEKDAY: dict[int, list[int]] = {
-    0: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],  # Monday
-    1: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],  # Tuesday
-    2: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],  # Wednesday
-    3: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],  # Thursday
-    4: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],  # Friday
-    5: [9, 10, 11, 12, 13, 14],                  # Saturday (09:00-15:00)
-    6: [],                                        # Sunday (closed)
+    0: [8, 9, 10, 11, 14, 15, 16, 17],  # Monday: 08:00-12:00, 14:00-18:00
+    1: [8, 9, 10, 11, 14, 15, 16, 17],  # Tuesday: 08:00-12:00, 14:00-18:00
+    2: [8, 9, 10, 11, 14, 15, 16, 17],  # Wednesday: 08:00-12:00, 14:00-18:00
+    3: [8, 9, 10, 11, 14, 15, 16, 17],  # Thursday: 08:00-12:00, 14:00-18:00
+    4: [8, 9, 10, 11, 14, 15, 16, 17],  # Friday: 08:00-12:00, 14:00-18:00
+    5: [8, 9, 10, 11, 12, 13, 14],       # Saturday: 08:00-15:00
+    6: [],                                 # Sunday (closed)
 }
 
-# Legacy flat list for backward compatibility (Mon-Fri hours)
-DEFAULT_APPOINTMENT_HOURS_LEGACY = [9, 10, 11, 14, 15, 16, 17]
+# Legacy flat list for backward compatibility (Mon-Fri hours, excluding lunch break)
+DEFAULT_APPOINTMENT_HOURS_LEGACY = [8, 9, 10, 11, 14, 15, 16, 17]
 
 SETTING_DEFAULTS: dict[str, Any] = {
     "company_name": "epresedi Inmobiliaria",

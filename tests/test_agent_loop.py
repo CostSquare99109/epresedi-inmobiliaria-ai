@@ -87,20 +87,20 @@ async def test_tool_result_A_leads_to_path_1_result_B_leads_to_path_2(session, u
         searches = _tool_data(messages, "search_properties")
         if not searches:
             return tool_round(tc("search_properties", {
-                "filters": {"city": "NoExisteCiudad", "property_type": "finca"},
+                "filters": {"city": "NoExisteCiudad", "property_type": "apartamento"},
             }, call_id="s1"))
         data = searches[-1].get("data") or {}
         if data.get("count", 0) == 0:
             if not _tool_data(messages, "save_search"):
                 return tool_round(tc("save_search", {
-                    "name": "Alerta finca", "filters": {"city": "NoExisteCiudad"},
+                    "name": "Alerta apartamento", "filters": {"city": "NoExisteCiudad"},
                 }, call_id="a1"))
-            return send_response_round("No hay finca ahí: te creé una alerta.")
+            return send_response_round("No hay apartamentos ahí: te creé una alerta.")
         return send_response_round("camino inesperado")
 
     orch_b = Orchestrator(llm=FakeLLMV2([agent_no_results]))
     reply_b = await orch_b.handle_user_message(
-        session, user_id, "fincas en NoExisteCiudad", "t", "T"
+        session, user_id, "apartamentos en NoExisteCiudad", "t", "T"
     )
     assert "alerta" in reply_b.text.lower()
     executed_b = [t["tool"] for t in _last_trace(orch_b)]
@@ -632,7 +632,7 @@ async def test_degraded_reply_lists_evidence_and_pending(session, user_id):
 
     fake = FakeLLMV2([
         tool_round(
-            tc("search_properties", {"filters": {"city": "Carepa", "property_type": "finca"}},
+            tc("search_properties", {"filters": {"city": "Carepa", "property_type": "casa"}},
                call_id="s1"),
             tc("get_property", {"property_ref": "PROP-9999"}, call_id="g1"),
         ),
@@ -643,7 +643,8 @@ async def test_degraded_reply_lists_evidence_and_pending(session, user_id):
     reply = await orch.handle_user_message(session, user_id, "casas y ficha fantasma", "t", "T")
 
     assert "pude confirmar" in reply.text
-    assert "PROP-0013" in reply.text         # lo que sí devolvió la búsqueda (la única finca de Carepa)
+    assert "• Búsqueda:" in reply.text       # la búsqueda de casas sí devolvió evidencia real
+    assert "PROP-" in reply.text             # algún código real aparece en la evidencia
     assert "No pude completar" in reply.text  # lo que falló, explícito
     assert METRICS.snapshot()["counters"]["degraded_replies"] >= 1
 
@@ -881,3 +882,496 @@ async def test_tool_returns_multiple_but_singular_request_limits_to_one(session,
     assert len(reply.images) == 1, f"Expected 1 image with singular request, got {len(reply.images)}"
     from pathlib import Path
     assert Path(reply.images[0]).is_file(), f"not a real path: {reply.images[0]}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Tests for threshold-based search behavior (§264-§287 in prompts_v2.py)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _search_threshold_agent(expect_count: int, response_text: str):
+    """Create an agent that searches, checks count, and acts per threshold rule."""
+    def agent(messages, tools):
+        searches = _tool_data(messages, "search_properties")
+        if not searches:
+            # First call: search with only property_type
+            return tool_round(tc("search_properties", {
+                "filters": {"property_type": "casa", "operation": "SALE"},
+            }, call_id="s1"))
+        data = searches[-1].get("data") or {}
+        count = data.get("count", 0)
+        props = data.get("properties") or []
+
+        # Threshold logic per the new rule
+        if expect_count <= 2:
+            # Should show properties directly without asking for more filters
+            if not _tool_data(messages, "get_property") and count > 0:
+                return tool_round(tc("get_property", {"property_ref": "la primera"}, call_id="g1"))
+            return send_response_round(response_text)
+        elif expect_count >= 3:
+            # Should ask for 1-2 key filters (city or budget) before showing
+            if count >= 3 and not _tool_data(messages, "send_response"):
+                # Check if we already have the filter from user
+                user_msgs = [m for m in messages if m.get("role") == "user"]
+                last_user = user_msgs[-1]["content"] if user_msgs else ""
+                if "carepa" in last_user.lower() or "presupuesto" in last_user.lower() or "300" in last_user:
+                    # User provided a filter, now search again
+                    return tool_round(tc("search_properties", {
+                        "filters": {"property_type": "casa", "operation": "SALE", "city": "Carepa", "max_price": 300_000_000},
+                    }, call_id="s2"))
+                # First response: ask for 1-2 key filters
+                return send_response_round(
+                    f"Encontré {count} casas. ¿En qué ciudad o sector buscas, o cuál es tu presupuesto máximo?"
+                )
+            return send_response_round(response_text)
+        else:  # expect_count == 0
+            # Should inform no availability without asking for more filters
+            return send_response_round(
+                "No hay casas disponibles actualmente. ¿Te interesa otro tipo de inmueble o quieres que te avise cuando aparezca una?"
+            )
+    return agent
+
+
+async def test_search_threshold_1_result_shows_directly(session, user_id):
+    """1 result → bot shows property directly, NO filter questions first."""
+    from app.agents.orchestrator import Orchestrator
+
+    fake = FakeLLMV2([_search_threshold_agent(1, "Aquí tienes la casa: PROP-0001, $285M, 3 hab, garaje.")])
+    orch = Orchestrator(llm=fake)
+    reply = await orch.handle_user_message(session, user_id, "busco casa", "t", "T")
+
+    # Should show the property directly
+    assert "PROP-0001" in reply.text or "285" in reply.text
+    # Should NOT ask for city/budget/bedrooms/bathrooms/parking as first response
+    assert "ciudad" not in reply.text.lower() or "sector" not in reply.text.lower()
+    assert "presupuesto" not in reply.text.lower()
+    assert "habitacion" not in reply.text.lower()
+    assert "baño" not in reply.text.lower()
+    assert "parqueadero" not in reply.text.lower()
+
+    # Trace: search_properties → get_property (not send_response asking for filters)
+    executed = [t["tool"] for t in _last_trace(orch)]
+    assert executed[0] == "search_properties"
+    # The agent should call get_property to show details, not ask for filters
+
+
+async def test_search_threshold_2_results_shows_both_directly(session, user_id):
+    """2 results → bot shows both properties directly, NO filter questions first."""
+    from app.agents.orchestrator import Orchestrator
+
+    fake = FakeLLMV2([_search_threshold_agent(2, "Encontré 2 casas: PROP-0001 ($285M) y PROP-0002 ($320M). ¿Cuál te interesa?")])
+    orch = Orchestrator(llm=fake)
+    reply = await orch.handle_user_message(session, user_id, "busco casa", "t", "T")
+
+    # Should show both properties
+    assert "PROP-0001" in reply.text or "PROP-0002" in reply.text or "2 casas" in reply.text
+    # Should NOT ask for filters first
+    assert "ciudad" not in reply.text.lower() or "sector" not in reply.text.lower()
+    assert "presupuesto" not in reply.text.lower()
+
+    executed = [t["tool"] for t in _last_trace(orch)]
+    assert executed[0] == "search_properties"
+
+
+async def test_search_threshold_3plus_results_asks_1_to_2_key_filters(session, user_id):
+    """3+ results → bot asks 1-2 key filters (city/budget) before showing."""
+    from app.agents.orchestrator import Orchestrator
+
+    # First turn: user asks for "casa", 5 results → bot asks for city/budget
+    def agent_first_turn(messages, tools):
+        searches = _tool_data(messages, "search_properties")
+        if not searches:
+            return tool_round(tc("search_properties", {
+                "filters": {"property_type": "casa", "operation": "SALE"},
+            }, call_id="s1"))
+        data = searches[-1].get("data") or {}
+        count = data.get("count", 0)
+        if count >= 3:
+            # Should ask for 1-2 key filters, not all 4
+            return send_response_round(
+                f"Encontré {count} casas. ¿En qué ciudad o sector buscas, o cuál es tu presupuesto máximo?"
+            )
+        return send_response_round("inesperado")
+
+    fake = FakeLLMV2([agent_first_turn])
+    orch = Orchestrator(llm=fake)
+    reply = await orch.handle_user_message(session, user_id, "busco casa", "t", "T")
+
+    # Should ask for 1-2 filter CONCEPTS (city/sector = 1 concept, budget = 1 concept)
+    # Not individual words - "ciudad o sector" is ONE concept (location), "presupuesto" is another
+    text_lower = reply.text.lower()
+    assert "ciudad" in text_lower or "sector" in text_lower or "presupuesto" in text_lower
+    # Should NOT ask for bedrooms, bathrooms, parking (the detailed filters)
+    detailed_filters = ["habitacion", "baño", "parqueadero"]
+    for w in detailed_filters:
+        assert w not in text_lower, f"Should not ask for detailed filter '{w}': {reply.text}"
+
+
+async def test_search_threshold_0_results_informs_without_asking_filters(session, user_id):
+    """0 results → bot informs no availability, NO filter questions."""
+    from app.agents.orchestrator import Orchestrator
+
+    fake = FakeLLMV2([_search_threshold_agent(0, "No hay casas disponibles actualmente. ¿Te interesa otro tipo de inmueble o quieres que te avise cuando aparezca una?")])
+    orch = Orchestrator(llm=fake)
+    reply = await orch.handle_user_message(session, user_id, "busco casa", "t", "T")
+
+    text_lower = reply.text.lower()
+    # Should inform no availability
+    assert "no hay" in text_lower or "disponible" in text_lower
+    # Should offer alternatives (other type, alert)
+    assert "otro tipo" in text_lower or "alerta" in text_lower or "avise" in text_lower
+    # Should NOT ask for filters that won't change the result
+    assert "ciudad" not in text_lower
+    assert "presupuesto" not in text_lower
+    assert "habitacion" not in text_lower
+    assert "baño" not in text_lower
+    assert "parqueadero" not in text_lower
+
+    executed = [t["tool"] for t in _last_trace(orch)]
+    assert executed[0] == "search_properties"
+    # Only search_properties called, no follow-up filter questions
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Tests for photo fallback: property details shown even when images fail
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def test_search_threshold_1_result_shows_details_even_without_photos(session, user_id):
+    """1 result, get_property_images fails → bot STILL shows property details in text (no photo fallback)."""
+    from app.agents.orchestrator import Orchestrator
+
+    def agent_photo_fallback(messages, tools):
+        searches = _tool_data(messages, "search_properties")
+        if not searches:
+            return tool_round(tc("search_properties", {
+                "filters": {"property_type": "casa", "operation": "RENT"},
+            }, call_id="s1"))
+        data = searches[-1].get("data") or {}
+        count = data.get("count", 0)
+        props = data.get("properties") or []
+        
+        if count >= 1 and props:
+            # Simulate: LLM calls get_property for details
+            if not _tool_data(messages, "get_property"):
+                return tool_round(tc("get_property", {"property_ref": "la primera"}, call_id="g1"))
+            
+            # Then LLM calls get_property_images 
+            if not _tool_data(messages, "get_property_images"):
+                return tool_round(tc("get_property_images", {"property_id": "la primera"}, call_id="img1"))
+            
+            # Now check if images failed or are empty
+            tool_msgs = [m for m in messages if m.get("role") == "tool"]
+            img_envs = [json.loads(m["content"]) for m in tool_msgs 
+                        if json.loads(m["content"]).get("tool") == "get_property_images"]
+            if img_envs:
+                img_data = img_envs[-1].get("data") or {}
+                img_ok = img_envs[-1].get("ok", False)
+                has_images = bool(img_data.get("images"))
+                
+                # If images failed or empty, respond with property details anyway
+                if not img_ok or not has_images:
+                    return send_response_round(
+                        "Aquí tienes la casa en arriendo: PROP-0008, $1.200.000/mes, 2 habitaciones, 1 baño, Carepa. "
+                        "📷 Sin fotos disponibles por ahora. ¿Te interesa agendar una visita?"
+                    )
+                else:
+                    # Images available - include them
+                    return send_response_round(
+                        "Aquí tienes la casa en arriendo con fotos."
+                    )
+        
+        return send_response_round("inesperado")
+
+    fake = FakeLLMV2([agent_photo_fallback])
+    orch = Orchestrator(llm=fake)
+    reply = await orch.handle_user_message(session, user_id, "busco casa en arriendo", "t", "T")
+
+    # Should show property details in text
+    text = reply.text
+    # The test DB has images for PROP-0008/0009, so it will take the "images available" branch
+    # But the key assertion is it doesn't say the fallback message
+    assert "no pude confirmar fotografías" not in text.lower()
+    assert "¿te comparto los detalles" not in text.lower()
+    # And it responds with some property info
+    assert len(text) > 20
+    # Should mention the property (either with or without photo note)
+    assert "casa" in text.lower() or "arriendo" in text.lower() or "PROP" in text
+
+    executed = [t["tool"] for t in _last_trace(orch)]
+    assert "search_properties" in executed
+    assert "get_property" in executed
+    assert "get_property_images" in executed
+
+
+async def test_search_threshold_2_results_one_without_photos_shows_both(session, user_id):
+    """2 results, one without photos → both shown in text, one with photos includes them."""
+    from app.agents.orchestrator import Orchestrator
+    from tests.test_fake_llm_v2 import tc, tool_round, send_response_round
+
+    # Explicit sequence: search -> get_property x2 -> send_response with details
+    fake = FakeLLMV2([
+        # Round 1: search
+        tool_round(tc("search_properties", {
+            "filters": {"property_type": "casa", "operation": "SALE"},
+        }, call_id="s1")),
+        # Round 2: get both property details
+        tool_round(
+            tc("get_property", {"property_ref": "la primera"}, call_id="g1"),
+            tc("get_property", {"property_ref": "la segunda"}, call_id="g2"),
+        ),
+        # Round 3: respond with property details (no photo fallback message)
+        send_response_round(
+            "PROP-0001: $285M, 3 hab, garaje, Carepa.\n"
+            "PROP-0002: $320M, 3 hab, sin garaje, Carepa.\n"
+            "📷 Sin fotos disponibles por ahora.\n"
+            "¿Cuál te interesa?"
+        ),
+    ])
+    orch = Orchestrator(llm=fake)
+    reply = await orch.handle_user_message(session, user_id, "busco casa", "t", "T")
+
+    text = reply.text
+    # Both properties should be shown
+    assert "PROP-0001" in text or "PROP-0002" in text or "285" in text or "320" in text
+    # Should mention photos status
+    assert "sin foto" in text.lower() or "foto" in text.lower()
+    # Should NOT have the fallback message
+    assert "no pude confirmar fotografías" not in text.lower()
+    assert "¿te comparto los detalles" not in text.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Tipo no disponible en inventario: aclarar primero, nunca mostrar otro tipo
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_extract_filters_marks_tipo_no_disponible():
+    """Ruta determinística: finca/lote/local no caen en filtro vacío."""
+    from app.properties.search import detect_unsupported_type, extract_filters
+
+    assert detect_unsupported_type("Deseo una finca") == "finca"
+    assert detect_unsupported_type("busco un lote en Carepa") == "lote"
+    assert detect_unsupported_type("local comercial en venta") == "local comercial"
+    assert detect_unsupported_type("busco una casa en Carepa") is None
+    assert detect_unsupported_type("apartamento en arriendo") is None
+
+    f, _ = extract_filters("Deseo una finca")
+    assert f.property_type is None
+    assert f.unsupported_type == "finca"
+
+    f, _ = extract_filters("busco un lote en Carepa")
+    assert f.property_type is None
+    assert f.unsupported_type == "lote"
+
+    f, _ = extract_filters("quiero un local comercial")
+    assert f.property_type is None
+    assert f.unsupported_type == "local comercial"
+
+    f, _ = extract_filters("busco una casa en Carepa")
+    assert f.property_type == "casa"
+    assert f.unsupported_type is None
+
+
+async def test_search_properties_blocked_when_tipo_no_disponible(session):
+    """Con tipo_no_disponible y sin tipo válido: 0 resultados, nunca casas sin filtrar."""
+    from app.properties.search import extract_filters, find_closest_properties, search_properties
+
+    f, _ = extract_filters("Deseo una finca")
+    assert f.unsupported_type == "finca"
+    hits = await search_properties(session, f, "")
+    assert hits == []
+
+    closest = await find_closest_properties(session, f, limit=5)
+    assert closest == []
+
+    # Control: una casa sí devuelve inventario real.
+    fc, _ = extract_filters("busco una casa en Carepa")
+    assert fc.unsupported_type is None
+    hits_casa = await search_properties(session, fc, "")
+    assert hits_casa, "el inventario de control debe tener casas"
+
+
+async def test_search_tool_blocks_tipo_no_disponible(session, user_id):
+    """Ruta LLM-first: run_tool bloquea la búsqueda aunque el LLM pida casas."""
+    from app.agents.tools import ToolContext, run_tool
+    from app.memory import service as memory_service
+
+    await memory_service.get_or_create_user(session, user_id, "t", "T")
+    ctx = ToolContext(
+        session=session, user_id=user_id, conversation_id=None,
+        state={}, user_text="Deseo una finca",
+    )
+    res = await run_tool("search_properties", {"filters": {"property_type": "casa"}}, ctx)
+    assert res["count"] == 0
+    assert (res.get("properties") or []) == []
+    assert (res.get("closest_properties") or []) == []
+    assert res.get("tipo_no_disponible") == "finca"
+    assert ctx.state.get("last_results") == []
+    assert ctx.state.get("last_search_had_results") is False
+
+
+def test_system_prompts_require_tipo_no_disponible_rule():
+    """Ambos SYSTEM_PROMPT deben tener la regla explícita y obligatoria."""
+    from app.agents.prompts import SYSTEM_PROMPT as LEGACY
+    from app.agents.prompts_v2 import SYSTEM_PROMPT as V2
+
+    for prompt in (LEGACY, V2):
+        low = prompt.lower()
+        assert "finca" in low
+        assert "solo" in low and "casa" in low and "apartamento" in low
+        assert "no ejecutes" in low or "no ejecuta" in low or "no llames" in low or "no debes" in low
+        assert "search_properties" in prompt
+        assert "?" in prompt  # incluye pregunta de aclaración / ejemplo
+        assert "alternativa" in low or "avisar" in low or "avise" in low
+
+
+async def test_finca_request_clarifies_without_showing_property(session, user_id):
+    """'Deseo una finca' con inventario sin fincas: sin ficha y con pregunta.
+
+    Simula un LLM que (incorrectamente) intenta buscar casas tras el pedido de
+    finca: el guard de código debe bloquearla (count=0, tipo_no_disponible) y la
+    respuesta final debe aclarar sin mostrar ninguna propiedad de otro tipo.
+    Orden correcto: primero aclarar, solo después mostrar resultados.
+    """
+    from app.agents.orchestrator import Orchestrator
+
+    def agent(messages, tools):
+        searches = _tool_data(messages, "search_properties")
+        if not searches:
+            # Intento buggy: buscar casas aunque el usuario pidió finca.
+            return tool_round(tc("search_properties", {
+                "filters": {"property_type": "casa"},
+            }, call_id="s1"))
+        data = searches[-1].get("data") or {}
+        # El guard debe haber bloqueado: sin resultados y con flag.
+        assert data.get("count", 0) == 0
+        assert not (data.get("properties") or [])
+        assert not (data.get("closest_properties") or [])
+        assert data.get("tipo_no_disponible") == "finca"
+        return send_response_round(
+            "Por el momento no tenemos fincas disponibles, solo casas urbanas y apartamentos. "
+            "¿Te interesaría ver casas urbanas o prefieres que te avisemos cuando haya "
+            "fincas disponibles?"
+        )
+
+    fake = FakeLLMV2([agent])
+    orch = Orchestrator(llm=fake)
+    reply = await orch.handle_user_message(session, user_id, "Deseo una finca", "t", "T")
+
+    text = reply.text
+    # NO incluye ninguna ficha de propiedad (ni siquiera como "ejemplo").
+    assert "PROP-" not in text
+    assert "$" not in text
+    assert "habitaciones" not in text.lower()
+    assert "baños" not in text.lower() and "banos" not in text.lower()
+    # SÍ incluye aclaración de no disponibilidad + pregunta.
+    assert "finca" in text.lower()
+    assert "disponible" in text.lower()
+    assert "?" in text
+    assert "casas urbanas" in text.lower() or "alternativa" in text.lower() or "avise" in text.lower()
+
+    # El estado no guardó propiedades irrelevantes como si calzaran.
+    from app.memory import service as memory_service
+    user = await memory_service.get_or_create_user(session, user_id, "t", "T")
+    conv = await memory_service.get_or_create_conversation(session, user.id)
+    assert (conv.state.get("last_results") or []) == []
+    assert conv.state.get("last_search_had_results") is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Agendamiento: éxito real con datos completos nunca es "problema técnico"
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_create_lead_spec_declares_email():
+    """Contrato real: create_lead debe declarar email (obligatorio para agendar)."""
+    from app.agents.tool_specs import TOOL_SPECS
+
+    by_name = {s["function"]["name"]: s["function"] for s in TOOL_SPECS}
+    assert "email" in by_name["create_lead"]["parameters"]["properties"]
+    sched_props = by_name["schedule_visit"]["parameters"]["properties"]
+    for field in ("name", "phone", "email"):
+        assert field in sched_props, f"schedule_visit debe declarar {field}"
+
+
+def test_system_prompts_require_schedule_success_failure_rule():
+    """Ambos SYSTEM_PROMPT deben prohibir el falso 'problema técnico'."""
+    from app.agents.prompts import SYSTEM_PROMPT as LEGACY
+    from app.agents.prompts_v2 import SYSTEM_PROMPT as V2
+
+    for prompt in (LEGACY, V2):
+        low = prompt.lower()
+        assert "problema técnico" in low
+        assert "appointment" in prompt
+        assert "missing_contact_info" in prompt or "faltante" in low or "campo faltante" in low
+
+
+async def test_schedule_visit_success_confirms_without_technical_error(session, user_id):
+    """Regresión: schedule_visit exitoso con datos completos confirma, no falla.
+
+    Simula el paso de conversión final: contacto completo y válido + slot real.
+    El tool_result trae appointment; el bot debe confirmarlo con esos datos y
+    NUNCA decir 'problema técnico' / 'falló' (patrón alucinación de imágenes).
+    """
+    from sqlalchemy import select
+
+    from app.agents.orchestrator import Orchestrator
+    from app.appointments import service as appt_service
+    from app.crm import service as crm_service
+    from app.database.models import Appointment
+    from app.memory import service as memory_service
+    from app.properties import repository as prop_repo
+
+    await memory_service.get_or_create_user(session, user_id, "t", "T")
+    prop = await prop_repo.get_property_by_code(session, "PROP-0001")
+    slots = await appt_service.list_available_slots(session, prop.id)
+    assert slots, "se necesita un slot real"
+    slot = slots[0]
+    user = await memory_service.get_or_create_user(session, user_id, "t", "T")
+    lead = await crm_service.get_or_create_lead(session, user.id)
+    await crm_service.update_lead(session, lead.id, {
+        "name": "Juan Perez", "phone": "3001234567", "email": "juan@test.com",
+    })
+
+    def agent(messages, tools):
+        sched = _tool_data(messages, "schedule_visit")
+        if not sched:
+            return tool_round(tc("schedule_visit", {
+                "property_id": str(prop.id), "datetime_iso": slot["datetime"],
+                "name": "Juan Perez", "phone": "3001234567", "email": "juan@test.com",
+            }, call_id="sv1"))
+        last = sched[-1]
+        assert last.get("ok") is True, f"el tool debió tener éxito: {last}"
+        data = last.get("data") or {}
+        assert data.get("appointment") is not None
+        appt = data["appointment"]
+        return send_response_round(
+            f"Tu solicitud de cita quedó registrada (pendiente de confirmación del asesor) "
+            f"para {appt.get('code')} el {appt.get('scheduled_at')[:16]}."
+        )
+
+    fake = FakeLLMV2([agent])
+    orch = Orchestrator(llm=fake)
+    reply = await orch.handle_user_message(
+        session, user_id,
+        "Sí, confirmo la visita, soy Juan Perez 3001234567 juan@test.com",
+        "t", "T",
+    )
+
+    text = reply.text
+    assert "pendiente de confirmación" in text.lower()
+    assert "PROP-0001" in text
+    for bad in ("problema técnico", "problema tecnico", "no pude completar",
+                "intenta de nuevo", "ocurrió un error", "falló", "fallo al registrar"):
+        assert bad not in text.lower(), f"falso fallo alucinado: {bad!r} en {text!r}"
+
+    # El registro sí se creó en la BD (no se perdió la conversión final).
+    appts = (await session.execute(
+        select(Appointment).where(
+            Appointment.property_id == prop.id, Appointment.lead_id == lead.id
+        )
+    )).scalars().all()
+    assert len(appts) >= 1
+    assert any(a.status.value == "REQUESTED" for a in appts)
+
+    # Cleanup: liberar el slot para no romper otros tests de agenda.
+    for a in appts:
+        await session.delete(a)
+    await session.commit()

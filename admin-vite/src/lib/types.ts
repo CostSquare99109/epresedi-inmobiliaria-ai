@@ -87,3 +87,116 @@ export interface HealthDTO {
   checks: Record<string, boolean>;
   errors: Record<string, string>;
 }
+
+// Dashboard Stats Types
+export interface DashboardStatsDTO {
+  properties: {
+    total: number;
+    by_status: Record<string, number>;
+    by_operation: Record<string, number>;
+    by_type: Record<string, number>;
+    without_images: number;
+    recent: Array<{
+      id: string;
+      code: string;
+      title: string;
+      status: string;
+      operation: string;
+      created_at: string;
+    }>;
+  };
+  leads: {
+    total: number;
+    by_status: Record<string, number>;
+  };
+  appointments: {
+    total: number;
+    by_status: Record<string, number>;
+    upcoming: Array<{
+      id: string;
+      property_id: string;
+      property_code?: string | null;
+      property_title?: string | null;
+      property_address?: string | null;
+      lead_id: string | null;
+      scheduled_at: string;
+      status: string;
+      notes: string;
+    }>;
+    today: Array<{
+      id: string;
+      property_id: string;
+      property_code?: string | null;
+      property_title?: string | null;
+      property_address?: string | null;
+      lead_id: string | null;
+      scheduled_at: string;
+      status: string;
+      notes: string;
+    }>;
+  };
+  conversations: {
+    total: number;
+    recent: Array<{
+      id: string;
+      user_id: number;
+      summary: string;
+      updated_at: string;
+    }>;
+  };
+  activity: Array<{
+    id: number;
+    action: string;
+    action_label: string;
+    entity: string;
+    entity_id: string | null;
+    metadata: Record<string, any>;
+    actor_name: string;
+    created_at: string;
+  }>;
+  system: {
+    timestamp: string;
+  };
+}
+
+export interface DashboardPropertyStatus {
+  key: string;
+  label: string;
+  count: number;
+  tone: "success" | "warn" | "danger" | "neutral" | "info";
+}
+
+export interface DashboardOperation {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface DashboardPropertyType {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface DashboardActivityItem {
+  id: number;
+  action: string;
+  action_label: string;
+  entity: string;
+  entity_id: string | null;
+  metadata: Record<string, any>;
+  actor_name: string;
+  created_at: string;
+}
+
+export interface DashboardUpcomingAppointment {
+  id: string;
+  property_id: string;
+  property_code?: string | null;
+  property_title?: string | null;
+  property_address?: string | null;
+  lead_id: string | null;
+  scheduled_at: string;
+  status: string;
+  notes: string;
+}

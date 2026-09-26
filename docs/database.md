@@ -22,7 +22,7 @@ PostgreSQL + pgvector, todo local. Esquema gestionado por Alembic (`migrations/v
 
 ## Enums
 
-- `PropertyType`: casa, apartamento, lote, local, oficina, finca, proyecto (extensible)
+- `PropertyType`: casa, apartamento (únicos tipos válidos)
 - `Operation`: SALE, RENT (preparado para TEMPORARY_RENT, PROJECT)
 - `PropertyStatus`: AVAILABLE, RESERVED, SOLD, INACTIVE
 - `DocumentStatus`: PENDING, PROCESSING, READY, FAILED

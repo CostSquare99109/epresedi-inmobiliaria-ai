@@ -150,16 +150,18 @@ def _make_ordinal_orchestrator():
                 "semantic_query": "casa Carepa",
             }, call_id="c2"),
         ),
-        final_decision(search_decision("Encontré 3 casas en Carepa.", phase="PROPERTY_SELECTION")),
-        # Turns 2-4: "la primera", "la segunda", "la tercera" (orden real de relevancia: PROP-0003, PROP-0009, PROP-0001)
+        final_decision(search_decision("Encontré 4 casas en Carepa.", phase="PROPERTY_SELECTION")),
+        # Turns 2-5: "la primera".."la cuarta" (orden real de relevancia: PROP-0010, PROP-0003, PROP-0009, PROP-0001)
         tool_round(tc("get_property", {"property_ref": "la primera"}, call_id="c3")),
-        final_decision(property_details_decision("Casa - PROP-0003", property_code="PROP-0003")),
+        final_decision(property_details_decision("Casa - PROP-0010", property_code="PROP-0010")),
         tool_round(tc("get_property", {"property_ref": "la segunda"}, call_id="c4")),
-        final_decision(property_details_decision("Casa - PROP-0009", property_code="PROP-0009")),
+        final_decision(property_details_decision("Casa - PROP-0003", property_code="PROP-0003")),
         tool_round(tc("get_property", {"property_ref": "la tercera"}, call_id="c5")),
+        final_decision(property_details_decision("Casa - PROP-0009", property_code="PROP-0009")),
+        tool_round(tc("get_property", {"property_ref": "la cuarta"}, call_id="c6")),
         final_decision(property_details_decision("Casa - PROP-0001", property_code="PROP-0001")),
-        # Turn 5: Direct code reference
-        tool_round(tc("get_property", {"property_ref": "PROP-0003"}, call_id="c6")),
+        # Turn 6: Direct code reference
+        tool_round(tc("get_property", {"property_ref": "PROP-0003"}, call_id="c7")),
         final_decision(property_details_decision("Casa - PROP-0003", property_code="PROP-0003")),
     ]))
 
@@ -401,9 +403,9 @@ async def test_e2e_ordinal_references_and_code_reference(user_id):
         user = await memory_service.get_or_create_user(session, user_id)
         conv = await memory_service.get_or_create_conversation(session, user.id)
         expected = [item["code"] for item in (conv.state.get("last_results") or [])]
-        assert len(expected) == 3  # inventario real: 3 casas ≤300M en Carepa (PROP-0003/0009/0001)
+        assert len(expected) == 4  # inventario real: 4 casas ≤300M en Carepa (PROP-0010/0003/0009/0001)
 
-        for i, word in enumerate(("la primera", "la segunda", "la tercera")):
+        for i, word in enumerate(("la primera", "la segunda", "la tercera", "la cuarta")):
             r = await _ask(orch, word, user_id, session)
             assert r.intent == Intent.PROPERTY_DETAILS, f"{word}: {r.text[:80]!r}"
             assert expected[i] in r.text, f"{word}: expected {expected[i]} in reply"

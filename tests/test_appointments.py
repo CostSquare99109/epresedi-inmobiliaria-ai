@@ -485,8 +485,8 @@ async def test_case_8_sabado_1501_rejected(session, user_id):
     assert "fuera de rango" in reason.lower()
 
 
-async def test_case_9_sabado_08am_rejected(session, user_id):
-    """Caso 9: sábado a las 08:00 - fuera de horario (antes de 09:00)."""
+async def test_case_9_sabado_08am_open(session, user_id):
+    """Caso 9: sábado a las 08:00 - dentro de horario (inicio a las 08:00)."""
     from app.core.bizconfig import is_within_business_hours
     import zoneinfo
     tz = zoneinfo.ZoneInfo("America/Bogota")
@@ -496,8 +496,8 @@ async def test_case_9_sabado_08am_rejected(session, user_id):
     saturday_08_utc = saturday_08.astimezone(dt.UTC)
     
     is_within, reason = await is_within_business_hours(saturday_08_utc)
-    assert is_within is False
-    assert "fuera de rango" in reason.lower()
+    assert is_within is True
+    assert "fuera de rango" not in reason.lower()
 
 
 async def test_case_10_lunes_0759_rejected(session, user_id):

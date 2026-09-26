@@ -85,6 +85,29 @@ _REQUIRED_CONTACT_FIELDS = ("name", "phone", "email")
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PHONE_RE = re.compile(r"^[\d\s()+.-]{7,}$")
+# Fallbacks para el patrón histórico notes="Nombre:...|Celular:...|Email:..."
+_EMAIL_FIND_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_NAME_IN_NOTES_RE = re.compile(r"(?:nombre|name)\s*[:\-]\s*([^\n|;]+)", re.IGNORECASE)
+_PHONE_IN_NOTES_RE = re.compile(r"(?:celular|telefono|tel[eé]fono|phone|cel)\s*[:\-]\s*([+\d][\d\s().-]{6,}\d)", re.IGNORECASE)
+
+
+def _extract_contact_from_notes(notes: str) -> dict[str, str]:
+    """Extrae contacto del patrón histórico en notes (no inventa: solo parsea)."""
+    out: dict[str, str] = {}
+    if not notes:
+        return out
+    m = _EMAIL_FIND_RE.search(notes)
+    if m and _EMAIL_RE.match(m.group(0).strip().lower()):
+        out["email"] = m.group(0).strip().lower()[:160]
+    m = _NAME_IN_NOTES_RE.search(notes)
+    if m:
+        name = re.sub(r"\s+", " ", m.group(1).strip())
+        if len(name) >= 3 and len(name.split()) >= 2:
+            out["name"] = name[:160]
+    m = _PHONE_IN_NOTES_RE.search(notes)
+    if m and _PHONE_RE.match(m.group(1).strip()):
+        out["phone"] = m.group(1).strip()[:40]
+    return out
 
 # Preferencias que el LLM declaró explícitamente en update_conversation_state
 # (campos validados por FIELD_SPECS) → columnas de user_preferences.
@@ -101,6 +124,27 @@ _PREFERENCE_FIELDS = {
     "bathrooms": "bathrooms",
     "parking": "parking",
 }
+
+
+def _unsupported_type_request(ctx: ToolContext, extra_text: str = "") -> tuple[str | None, bool]:
+    """Detecta si el turno pide un tipo fuera del inventario (finca, lote, ...).
+
+    Devuelve (tipo_no_disponible, tiene_tipo_valido_en_mismo_mensaje).
+    Usa la misma fuente que la ruta determinística (detect_unsupported_type) para
+    no divergir: si el usuario pidió solo un tipo inexistente, la tool debe
+    BLOQUEAR resultados de otro tipo y pedir aclaración primero.
+    """
+    from app.properties.search import TYPE_RE, _deaccent, detect_unsupported_type
+
+    combined = f"{ctx.user_text or ''} {extra_text or ''}".strip()
+    if not combined:
+        return None, False
+    unsupported = detect_unsupported_type(combined)
+    if not unsupported:
+        return None, False
+    low = _deaccent(combined.lower())
+    has_supported = bool(TYPE_RE.search(low))
+    return unsupported, has_supported
 
 
 async def _get_missing_contact_fields(session: AsyncSession, user_id: int) -> list[str]:
@@ -122,28 +166,35 @@ async def _validate_and_update_contact(
 ) -> tuple[bool, list[str]]:
     """Validates and updates contact fields. Returns (all_present, missing_fields)."""
     from app.crm import service as crm_service
-    
+
     # Get current lead to check existing fields
     lead = await crm_service.get_or_create_lead(session, user_id)
-    
+
+    # Fallback: el patrón histórico empaquetaba contacto en notes
+    # ("Nombre:...|Celular:...|Email:..."). Si faltan top-level, parsear notes.
+    notes_fallback = _extract_contact_from_notes(str(data.get("notes") or ""))
+
     # Update any provided fields
     update_data = {}
-    if data.get("name"):
-        name = str(data["name"]).strip()
+    name_raw = data.get("name") or notes_fallback.get("name")
+    if name_raw:
+        name = str(name_raw).strip()
         if len(name) >= 3 and len(name.split()) >= 2:
             update_data["name"] = name[:160]
     elif lead.name and lead.name.strip():
         update_data["name"] = lead.name.strip()
-    
-    if data.get("phone"):
-        phone = str(data["phone"]).strip()
+
+    phone_raw = data.get("phone") or notes_fallback.get("phone")
+    if phone_raw:
+        phone = str(phone_raw).strip()
         if _PHONE_RE.match(phone):
             update_data["phone"] = phone[:40]
     elif lead.phone and lead.phone.strip():
         update_data["phone"] = lead.phone.strip()
-    
-    if data.get("email"):
-        email = str(data["email"]).strip().lower()
+
+    email_raw = data.get("email") or notes_fallback.get("email")
+    if email_raw:
+        email = str(email_raw).strip().lower()
         if _EMAIL_RE.match(email):
             update_data["email"] = email[:160]
     elif lead.email and lead.email.strip():
@@ -417,103 +468,167 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
     if name == "search_properties":
         raw = args.get("filters") or {}
         semantic = (args.get("semantic_query") or "").strip()
-        filters = SearchFilters()
-        if raw.get("property_type"): filters.property_type = raw["property_type"]
-        if raw.get("operation"): filters.operation = raw["operation"]
-        if raw.get("city"): filters.city = raw["city"]
-        if raw.get("min_price") is not None: filters.min_price = float(raw["min_price"])
-        if raw.get("max_price") is not None: filters.max_price = float(raw["max_price"])
-        if raw.get("bedrooms") is not None: filters.bedrooms = int(raw["bedrooms"])
-        if raw.get("bathrooms") is not None: filters.bathrooms = int(raw["bathrooms"])
-        if raw.get("parking") is not None: filters.parking = int(raw["parking"])
-        if raw.get("floors") is not None: filters.floors = int(raw["floors"])
-        if raw.get("offered_floor") is not None: filters.offered_floor = int(raw["offered_floor"])
-        if raw.get("floor_offer_type") in ("full_property", "single_floor", "multiple_floors", "partial"):
-            filters.floor_offer_type = raw["floor_offer_type"]
-        if raw.get("min_area") is not None: filters.min_area = float(raw["min_area"])
-        if semantic and not filters.query_text:
-            filters.query_text = semantic
-        hits = await search_properties(session, filters, semantic)
-
-        props = await prop_repo.get_properties(session, [h.property_id for h in hits], limit=max(len(hits), 1))
-        ordered = {str(p.id): p.to_dict() for p in props}
-        items = [ordered[h.property_id] for h in hits if h.property_id in ordered]
-        ctx.state["last_results"] = items
-        ctx.state["last_filters"] = filters.to_dict()
-
-        closest_items: list[dict] = []
-        if not items and (filters.max_price or filters.min_price or filters.bedrooms or filters.bathrooms):
-            # Sin resultados exactos: el CÓDIGO (nunca el LLM) busca reales las
-            # 5 propiedades más cercanas por precio/habitaciones/baños, manteniendo
-            # ciudad/operación/tipo como filtros duros. Se devuelven AMBOS resultados:
-            # el exacto (vacío) y las alternativas reales más parecidas.
-            from app.properties.search import find_closest_properties
-            closest_ids = await find_closest_properties(session, filters, limit=5)
-            if closest_ids:
-                closest_props = await prop_repo.get_properties(session, closest_ids, limit=len(closest_ids))
-                closest_by_id = {str(p.id): p.to_dict() for p in closest_props}
-                closest_items = [closest_by_id[cid] for cid in closest_ids if cid in closest_by_id]
-
-        if not items:
+        # Guard LLM-first para tipo no disponible: si el usuario pidió en ESTE
+        # turno un tipo fuera del inventario (finca, lote, bodega, local, ...)
+        # sin mencionar casa/apartamento, NO se consulta el inventario ni se
+        # devuelven propiedades de otro tipo. Se devuelve aclaración primero.
+        _unsupported, _has_supported = _unsupported_type_request(ctx, semantic)
+        if _unsupported and not _has_supported:
+            ctx.state["last_results"] = []
+            ctx.state["last_filters"] = {
+                "unsupported_type": _unsupported, "tipo_no_disponible": _unsupported,
+            }
             ctx.state["awaiting_search_refinement"] = True
             ctx.state["last_search_had_results"] = False
-        else:
-            ctx.state["awaiting_search_refinement"] = False
-            ctx.state["last_search_had_results"] = True
-        ctx.retrieved_property_ids.extend(str(p["id"]) for p in items)
-        result["count"] = len(items)
-        result["properties"] = items
-        if closest_items:
-            ctx.retrieved_property_ids.extend(str(p["id"]) for p in closest_items)
-            result["exact_match"] = False
-            result["closest_properties"] = closest_items
-            result["closest_note"] = (
-                "No hay resultados EXACTOS para lo que pidió el usuario (ver filtros aplicados). "
-                "`closest_properties` son propiedades REALES del inventario, las más parecidas por "
-                "precio/habitaciones/baños, en la misma ciudad/tipo/operación pedidos. Preséntaselas "
-                "como alternativas cercanas dejando CLARO que no cumplen exactamente lo solicitado — "
-                "nunca las presentes como si fueran un match exacto. Menciona en qué se diferencian "
-                "(precio más alto, menos habitaciones, etc.) usando los datos reales de cada una."
-            )
-        elif not items:
+            log.info("search_blocked_tipo_no_disponible unsupported=%s user=%s", _unsupported, ctx.user_id)
+            result["count"] = 0
+            result["properties"] = []
             result["exact_match"] = False
             result["closest_properties"] = []
-        # NOTA: ya no se persisten preferencias automáticamente en cada búsqueda.
-        # Los filtros de una búsqueda pueden ser exploratorios o (antes del fix de
-        # alucinaciones) inventados por el LLM; guardarlos ciegamente como "preferencia
-        # confirmada del cliente" contaminaba el perfil permanentemente entre conversaciones.
-        # Las preferencias reales se registran vía update_conversation_state, donde el LLM
-        # las declara explícitamente y bajo la regla de no inventar datos.
+            result["tipo_no_disponible"] = _unsupported
+            result["clarify"] = True
+            result["message"] = (
+                f"El tipo '{_unsupported}' no está disponible actualmente en el inventario "
+                f"(solo hay casas y apartamentos). NO muestres fichas de otro tipo como si "
+                f"calzaran: informa que no hay '{_unsupported}' y pregunta si quiere ver "
+                f"alternativas o que le avisemos cuando haya disponibilidad."
+            )
+        else:
+            filters = SearchFilters()
+            if raw.get("property_type"): filters.property_type = raw["property_type"]
+            if raw.get("unsupported_type"): filters.unsupported_type = raw["unsupported_type"]
+            # Si el usuario mencionó ambos (ej. "casa o finca"), se conserva el
+            # aviso para que el agente aclare la parte no disponible.
+            if _unsupported and _has_supported:
+                filters.unsupported_type = filters.unsupported_type or _unsupported
+                result["tipo_no_disponible"] = _unsupported
+                result["tipo_no_disponible_note"] = (
+                    f"El usuario también pidió '{_unsupported}', que no está disponible. "
+                    f"Si muestras resultados del tipo válido, aclara primero que "
+                    f"'{_unsupported}' no hay y que lo que sigue es solo la parte válida."
+                )
+            if raw.get("operation"): filters.operation = raw["operation"]
+            if raw.get("city"): filters.city = raw["city"]
+            if raw.get("min_price") is not None: filters.min_price = float(raw["min_price"])
+            if raw.get("max_price") is not None: filters.max_price = float(raw["max_price"])
+            if raw.get("bedrooms") is not None: filters.bedrooms = int(raw["bedrooms"])
+            if raw.get("bathrooms") is not None: filters.bathrooms = int(raw["bathrooms"])
+            if raw.get("parking") is not None: filters.parking = int(raw["parking"])
+            if raw.get("floors") is not None: filters.floors = int(raw["floors"])
+            if raw.get("offered_floor") is not None: filters.offered_floor = int(raw["offered_floor"])
+            if raw.get("floor_offer_type") in ("full_property", "single_floor", "multiple_floors", "partial"):
+                filters.floor_offer_type = raw["floor_offer_type"]
+            if raw.get("min_area") is not None: filters.min_area = float(raw["min_area"])
+            if semantic and not filters.query_text:
+                filters.query_text = semantic
+            hits = await search_properties(session, filters, semantic)
+
+            props = await prop_repo.get_properties(session, [h.property_id for h in hits], limit=max(len(hits), 1))
+            ordered = {str(p.id): p.to_dict() for p in props}
+            items = [ordered[h.property_id] for h in hits if h.property_id in ordered]
+            ctx.state["last_results"] = items
+            ctx.state["last_filters"] = filters.to_dict()
+
+            closest_items: list[dict] = []
+            if not items and (filters.max_price or filters.min_price or filters.bedrooms or filters.bathrooms):
+                # Sin resultados exactos: el CÓDIGO (nunca el LLM) busca reales las
+                # 5 propiedades más cercanas por precio/habitaciones/baños, manteniendo
+                # ciudad/operación/tipo como filtros duros. Se devuelven AMBOS resultados:
+                # el exacto (vacío) y las alternativas reales más parecidas.
+                from app.properties.search import find_closest_properties
+                closest_ids = await find_closest_properties(session, filters, limit=5)
+                if closest_ids:
+                    closest_props = await prop_repo.get_properties(session, closest_ids, limit=len(closest_ids))
+                    closest_by_id = {str(p.id): p.to_dict() for p in closest_props}
+                    closest_items = [closest_by_id[cid] for cid in closest_ids if cid in closest_by_id]
+
+            if not items:
+                ctx.state["awaiting_search_refinement"] = True
+                ctx.state["last_search_had_results"] = False
+            else:
+                ctx.state["awaiting_search_refinement"] = False
+                ctx.state["last_search_had_results"] = True
+            ctx.retrieved_property_ids.extend(str(p["id"]) for p in items)
+            result["count"] = len(items)
+            result["properties"] = items
+            if closest_items:
+                ctx.retrieved_property_ids.extend(str(p["id"]) for p in closest_items)
+                result["exact_match"] = False
+                result["closest_properties"] = closest_items
+                result["closest_note"] = (
+                    "No hay resultados EXACTOS para lo que pidió el usuario (ver filtros aplicados). "
+                    "`closest_properties` son propiedades REALES del inventario, las más parecidas por "
+                    "precio/habitaciones/baños, en la misma ciudad/tipo/operación pedidos. Preséntaselas "
+                    "como alternativas cercanas dejando CLARO que no cumplen exactamente lo solicitado — "
+                    "nunca las presentes como si fueran un match exacto. Menciona en qué se diferencian "
+                    "(precio más alto, menos habitaciones, etc.) usando los datos reales de cada una."
+                )
+            elif not items:
+                result["exact_match"] = False
+                result["closest_properties"] = []
+            # NOTA: ya no se persisten preferencias automáticamente en cada búsqueda.
+            # Los filtros de una búsqueda pueden ser exploratorios o (antes del fix de
+            # alucinaciones) inventados por el LLM; guardarlos ciegamente como "preferencia
+            # confirmada del cliente" contaminaba el perfil permanentemente entre conversaciones.
+            # Las preferencias reales se registran vía update_conversation_state, donde el LLM
+            # las declara explícitamente y bajo la regla de no inventar datos.
 
     elif name == "get_property":
-        prop = await _find_property(session, ctx, args.get("property_ref"))
-        if prop is None:
-            result = {"ok": False, "error": "Propiedad no encontrada o referencia ambigua."}
+        _unsupported_gp, _has_supported_gp = _unsupported_type_request(ctx)
+        if _unsupported_gp and not _has_supported_gp:
+            result = {
+                "ok": False, "retryable": False,
+                "code": "TIPO_NO_DISPONIBLE",
+                "tipo_no_disponible": _unsupported_gp,
+                "error": (
+                    f"El tipo '{_unsupported_gp}' no está disponible actualmente en el inventario "
+                    f"(solo hay casas y apartamentos). NO muestres la ficha de otra propiedad "
+                    f"como si fuera '{_unsupported_gp}': informa que no hay disponibilidad y "
+                    f"pregunta si quiere ver alternativas o que le avisemos cuando haya."
+                ),
+            }
         else:
-            result["property"] = prop.to_dict()
-            ctx.retrieved_property_ids.append(str(prop.id))
-            ctx.state["last_property_id"] = str(prop.id)
-            ctx.state["last_property_code"] = prop.code
+            prop = await _find_property(session, ctx, args.get("property_ref"))
+            if prop is None:
+                result = {"ok": False, "error": "Propiedad no encontrada o referencia ambigua."}
+            else:
+                result["property"] = prop.to_dict()
+                ctx.retrieved_property_ids.append(str(prop.id))
+                ctx.state["last_property_id"] = str(prop.id)
+                ctx.state["last_property_code"] = prop.code
 
     elif name == "compare_properties":
-        refs = args.get("property_refs") or []
-        props: list[dict] = []
-        seen: set[str] = set()
-        for ref in refs:
-            p = await _find_property(session, ctx, ref)
-            if p is not None and str(p.id) not in seen:
-                props.append(p.to_dict())
-                seen.add(str(p.id))
-        if len(props) < 2:  # contextual comparison from last results
-            for item in (ctx.state.get("last_results") or []):
-                if item["id"] not in seen:
-                    props.append(item)
-                    seen.add(item["id"])
-                if len(props) >= 4:
-                    break
-        result["properties"] = props
-        result["count"] = len(props)
-        ctx.retrieved_property_ids.extend(p["id"] for p in props)
+        _unsupported_cp, _has_supported_cp = _unsupported_type_request(ctx)
+        if _unsupported_cp and not _has_supported_cp:
+            result = {
+                "ok": False, "retryable": False,
+                "code": "TIPO_NO_DISPONIBLE",
+                "tipo_no_disponible": _unsupported_cp,
+                "error": (
+                    f"El tipo '{_unsupported_cp}' no está disponible actualmente. "
+                    f"No compares ni muestres propiedades de otro tipo como si calzaran: "
+                    f"aclara primero si quiere ver alternativas."
+                ),
+            }
+        else:
+            refs = args.get("property_refs") or []
+            props: list[dict] = []
+            seen: set[str] = set()
+            for ref in refs:
+                p = await _find_property(session, ctx, ref)
+                if p is not None and str(p.id) not in seen:
+                    props.append(p.to_dict())
+                    seen.add(str(p.id))
+            if len(props) < 2:  # contextual comparison from last results
+                for item in (ctx.state.get("last_results") or []):
+                    if item["id"] not in seen:
+                        props.append(item)
+                        seen.add(item["id"])
+                    if len(props) >= 4:
+                        break
+            result["properties"] = props
+            result["count"] = len(props)
+            ctx.retrieved_property_ids.extend(p["id"] for p in props)
 
     elif name == "search_documents":
         # El agente puede pasar código/ordinal/ref contextual: se resuelve igual
@@ -541,74 +656,88 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
             ]
 
     elif name == "get_property_images":
-        prop = await _find_property(session, ctx, _normalize_image_ref(args.get("property_id")))
-        if prop is None:
+        _unsupported_img, _has_supported_img = _unsupported_type_request(ctx)
+        if _unsupported_img and not _has_supported_img:
             result = {
                 "ok": False, "retryable": False,
-                "code": "PROPERTY_NOT_FOUND",
-                "error": "Propiedad no encontrada o referencia ambigua. Pide al usuario que precise cuál propiedad.",
-                "reason": "property_not_found",
+                "code": "TIPO_NO_DISPONIBLE",
+                "tipo_no_disponible": _unsupported_img,
+                "reason": "tipo_no_disponible",
+                "error": (
+                    f"El tipo '{_unsupported_img}' no está disponible actualmente. "
+                    f"No muestres fotos de otro tipo como si fueran '{_unsupported_img}': "
+                    f"aclara primero si quiere ver alternativas."
+                ),
             }
         else:
-            group = args.get("group")
-            extra_name = args.get("extra_name")
-            try:
-                images = await prop_repo.get_property_images(
-                    session, prop.id, group=group, extra_name=extra_name,
-                )
-            except ValueError as e:
+            prop = await _find_property(session, ctx, _normalize_image_ref(args.get("property_id")))
+            if prop is None:
                 result = {
                     "ok": False, "retryable": False,
-                    "code": "INVALID_GROUP",
-                    "error": str(e),
-                    "reason": "invalid_group",
+                    "code": "PROPERTY_NOT_FOUND",
+                    "error": "Propiedad no encontrada o referencia ambigua. Pide al usuario que precise cuál propiedad.",
+                    "reason": "property_not_found",
                 }
-                images = None
-            if images is None:
-                pass
             else:
-                limit = args.get("limit")
-                if isinstance(limit, int) and limit > 0:
-                    images = images[: min(limit, 10)]
-                log.info(
-                    "property_image_request property_id=%s code=%s db_count=%s limit=%s group=%s",
-                    prop.id, prop.code, len(images), limit, group,
-                )
-                if not images:
-                    if group:
-                        result = {
-                            "ok": False, "retryable": False,
-                            "code": "NO_IMAGES",
-                            "error": (
-                                f"Esta propiedad no tiene fotografías de "
-                                f"'{extra_name or group}' disponibles."
-                            ),
-                            "reason": "no_image",
-                            "property_id": str(prop.id),
-                            "property_code": prop.code,
-                            "group": group,
-                        }
-                    else:
-                        result = {
-                            "ok": False, "retryable": False,
-                            "code": "NO_IMAGES",
-                            "error": "En este momento esta propiedad no tiene fotografías disponibles.",
-                            "reason": "no_image",
-                            "property_id": str(prop.id),
-                            "property_code": prop.code,
-                        }
+                group = args.get("group")
+                extra_name = args.get("extra_name")
+                try:
+                    images = await prop_repo.get_property_images(
+                        session, prop.id, group=group, extra_name=extra_name,
+                    )
+                except ValueError as e:
+                    result = {
+                        "ok": False, "retryable": False,
+                        "code": "INVALID_GROUP",
+                        "error": str(e),
+                        "reason": "invalid_group",
+                    }
+                    images = None
+                if images is None:
+                    pass
                 else:
-                    result["images"] = [img.to_dict() for img in images]
-                    result["count"] = len(images)
-                    result["property_id"] = str(prop.id)
-                    result["property_code"] = prop.code
-                    # Resumen por característica para que el LLM elija bien.
-                    by_group: dict[str, int] = {}
-                    for img in images:
-                        g = img.group or "general"
-                        key = f"extra:{img.extra_name}" if g == "extra" and img.extra_name else g
-                        by_group[key] = by_group.get(key, 0) + 1
-                    result["groups"] = by_group
+                    limit = args.get("limit")
+                    if isinstance(limit, int) and limit > 0:
+                        images = images[: min(limit, 10)]
+                    log.info(
+                        "property_image_request property_id=%s code=%s db_count=%s limit=%s group=%s",
+                        prop.id, prop.code, len(images), limit, group,
+                    )
+                    if not images:
+                        if group:
+                            result = {
+                                "ok": False, "retryable": False,
+                                "code": "NO_IMAGES",
+                                "error": (
+                                    f"Esta propiedad no tiene fotografías de "
+                                    f"'{extra_name or group}' disponibles."
+                                ),
+                                "reason": "no_image",
+                                "property_id": str(prop.id),
+                                "property_code": prop.code,
+                                "group": group,
+                            }
+                        else:
+                            result = {
+                                "ok": False, "retryable": False,
+                                "code": "NO_IMAGES",
+                                "error": "En este momento esta propiedad no tiene fotografías disponibles.",
+                                "reason": "no_image",
+                                "property_id": str(prop.id),
+                                "property_code": prop.code,
+                            }
+                    else:
+                        result["images"] = [img.to_dict() for img in images]
+                        result["count"] = len(images)
+                        result["property_id"] = str(prop.id)
+                        result["property_code"] = prop.code
+                        # Resumen por característica para que el LLM elija bien.
+                        by_group: dict[str, int] = {}
+                        for img in images:
+                            g = img.group or "general"
+                            key = f"extra:{img.extra_name}" if g == "extra" and img.extra_name else g
+                            by_group[key] = by_group.get(key, 0) + 1
+                        result["groups"] = by_group
 
     elif name == "get_branch_info":
         prop = await _find_property(session, ctx, args.get("property_id"))
@@ -954,17 +1083,30 @@ async def run_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> dict[st
             result["error"] = "No se encontró una cita activa con ese id."
 
     elif name == "recommend_similar":
-        prop = await _find_property(session, ctx, args.get("property_id"))
-        if prop is None:
-            result = {"ok": False, "error": "Propiedad no encontrada."}
+        _unsupported_rs, _has_supported_rs = _unsupported_type_request(ctx)
+        if _unsupported_rs and not _has_supported_rs:
+            result = {
+                "ok": False, "retryable": False,
+                "code": "TIPO_NO_DISPONIBLE",
+                "tipo_no_disponible": _unsupported_rs,
+                "error": (
+                    f"El tipo '{_unsupported_rs}' no está disponible actualmente. "
+                    f"No recomiendes propiedades de otro tipo como si calzaran: "
+                    f"aclara primero si quiere ver alternativas."
+                ),
+            }
         else:
-            hits = await similar_properties(session, str(prop.id))
-            props = await prop_repo.get_properties(session, [h.property_id for h in hits])
-            ordered = {str(p.id): p.to_dict() for p in props}
-            items = [ordered[h.property_id] for h in hits if h.property_id in ordered]
-            result["properties"] = items
-            if items:
-                ctx.state["last_results"] = items
+            prop = await _find_property(session, ctx, args.get("property_id"))
+            if prop is None:
+                result = {"ok": False, "error": "Propiedad no encontrada."}
+            else:
+                hits = await similar_properties(session, str(prop.id))
+                props = await prop_repo.get_properties(session, [h.property_id for h in hits])
+                ordered = {str(p.id): p.to_dict() for p in props}
+                items = [ordered[h.property_id] for h in hits if h.property_id in ordered]
+                result["properties"] = items
+                if items:
+                    ctx.state["last_results"] = items
 
     elif name == "web_search":
         from app.agents import websearch

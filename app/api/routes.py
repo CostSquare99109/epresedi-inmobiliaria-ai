@@ -265,6 +265,265 @@ async def health_ready() -> JSONResponse:
     return JSONResponse(status_code=200 if ok else 503, content={"ok": ok, "checks": checks, "errors": errors})
 
 
+# ------------------------------------------------------------------ dashboard stats (aggregated endpoint for admin panel)
+@app.get("/dashboard/stats")
+async def dashboard_stats(user: AdminUser = Depends(require_permission("properties.read"))) -> dict:
+    """Aggregated statistics for the admin dashboard.
+    
+    Returns all key metrics in a single request to avoid N+1 API calls.
+    """
+    from datetime import UTC, datetime, timedelta
+    
+    async with AsyncSessionLocal() as session:
+        # 1. Property counts by status
+        prop_status_rows = (await session.execute(
+            select(Property.status, func.count()).group_by(Property.status)
+        )).all()
+        properties_by_status = {status.value: count for status, count in prop_status_rows}
+        total_properties = sum(properties_by_status.values())
+        
+        # 2. Property counts by operation
+        prop_operation_rows = (await session.execute(
+            select(Property.operation, func.count()).group_by(Property.operation)
+        )).all()
+        properties_by_operation = {op.value: count for op, count in prop_operation_rows}
+        
+        # 3. Property counts by type
+        prop_type_rows = (await session.execute(
+            select(Property.property_type, func.count()).group_by(Property.property_type)
+        )).all()
+        properties_by_type = {ptype.value: count for ptype, count in prop_type_rows}
+        
+        # 4. Properties without images
+        props_without_images = (await session.execute(
+            select(func.count()).select_from(Property).where(
+                ~Property.images.any()
+            )
+        )).scalar() or 0
+        
+        # 5. Leads counts by status
+        leads_status_rows = (await session.execute(
+            select(Lead.status, func.count()).group_by(Lead.status)
+        )).all()
+        leads_by_status = {status.value: count for status, count in leads_status_rows}
+        total_leads = sum(leads_by_status.values())
+        
+        # 6. Appointments counts by status
+        appt_status_rows = (await session.execute(
+            select(Appointment.status, func.count()).group_by(Appointment.status)
+        )).all()
+        appointments_by_status = {status.value: count for status, count in appt_status_rows}
+        total_appointments = sum(appointments_by_status.values())
+        
+        # 7. Upcoming appointments (next 7 days)
+        now = datetime.now(UTC)
+        week_later = now + timedelta(days=7)
+        upcoming_appts = (await session.execute(
+            select(Appointment).where(
+                Appointment.scheduled_at >= now,
+                Appointment.scheduled_at <= week_later,
+                Appointment.status.in_([AppointmentStatus.REQUESTED, AppointmentStatus.CONFIRMED]),
+            ).order_by(Appointment.scheduled_at).limit(10)
+        )).scalars().all()
+        
+        # 8. Today's appointments
+        today_start = datetime(now.year, now.month, now.day, tzinfo=UTC)
+        today_end = today_start + timedelta(days=1)
+        todays_appts = (await session.execute(
+            select(Appointment).where(
+                Appointment.scheduled_at >= today_start,
+                Appointment.scheduled_at < today_end,
+                Appointment.status.in_([AppointmentStatus.REQUESTED, AppointmentStatus.CONFIRMED]),
+            ).order_by(Appointment.scheduled_at)
+        )).scalars().all()
+        
+        # 9. Recent activity from audit log (last 20 events)
+        recent_activity = (await session.execute(
+            select(AdminAuditLog, AdminUser.email, AdminUser.name).outerjoin(
+                AdminUser, AdminUser.id == AdminAuditLog.admin_user_id
+            ).order_by(AdminAuditLog.created_at.desc()).limit(20)
+        )).all()
+        
+        # 10. Conversations count
+        total_conversations = (await session.execute(
+            select(func.count()).select_from(Conversation)
+        )).scalar() or 0
+        
+        # 11. Recent conversations (last 5)
+        recent_conversations = (await session.execute(
+            select(Conversation).order_by(Conversation.updated_at.desc()).limit(5)
+        )).scalars().all()
+        
+        # 12. Recent properties created (last 5)
+        recent_properties = (await session.execute(
+            select(Property).order_by(Property.created_at.desc()).limit(5)
+        )).scalars().all()
+
+        # 13. Lookup de propiedades referenciadas por las citas próximas/hoy,
+        # para no exponer UUIDs crudos en el panel (se muestra título/dirección).
+        appt_property_ids = {a.property_id for a in (*upcoming_appts, *todays_appts)}
+        prop_map: dict = {}
+        if appt_property_ids:
+            prop_rows = (await session.execute(
+                select(Property).where(Property.id.in_(appt_property_ids))
+            )).scalars().all()
+            prop_map = {p.id: p for p in prop_rows}
+
+    # Format appointments for frontend
+    def format_appt(a: Appointment) -> dict:
+        p = prop_map.get(a.property_id)
+        return {
+            "id": str(a.id),
+            "property_id": str(a.property_id),
+            "property_code": p.code if p else None,
+            "property_title": p.title if p else None,
+            "property_address": p._build_full_address() if p else None,
+            "lead_id": str(a.lead_id) if a.lead_id else None,
+            "scheduled_at": a.scheduled_at.isoformat(),
+            "status": a.status.value,
+            "notes": a.notes,
+        }
+    
+    # Format audit log for activity feed
+    def format_activity(entry: AdminAuditLog, email: str | None, name: str | None) -> dict:
+        action_labels = {
+            "property.created": "Nueva propiedad registrada",
+            "property.updated": "Propiedad actualizada",
+            "property.status_changed": "Estado de propiedad cambiado",
+            "property.deleted": "Propiedad eliminada",
+            "property.image_uploaded": "Imagen subida a propiedad",
+            "property.cover_changed": "Portada de propiedad cambiada",
+            "appointment.created": "Nueva cita agendada",
+            "appointment.rescheduled": "Cita reprogramada",
+            "appointment.confirmed": "Cita confirmada",
+            "appointment.cancelled": "Cita cancelada",
+            "appointment.completed": "Cita completada",
+            "lead.created": "Nuevo lead creado",
+            "lead.updated": "Lead actualizado",
+            "lead.status_changed": "Estado de lead cambiado",
+            "user.created": "Usuario creado",
+            "user.updated": "Usuario actualizado",
+            "branch.created": "Sede creada",
+            "branch.updated": "Sede actualizada",
+        }
+        return {
+            "id": entry.id,
+            "action": entry.action,
+            "action_label": action_labels.get(entry.action, entry.action),
+            "entity": entry.entity,
+            "entity_id": entry.entity_id,
+            "metadata": entry.audit_metadata or {},
+            "actor_name": name or email or "Sistema",
+            "created_at": entry.created_at.isoformat(),
+        }
+    
+    return {
+        "properties": {
+            "total": total_properties,
+            "by_status": properties_by_status,
+            "by_operation": properties_by_operation,
+            "by_type": properties_by_type,
+            "without_images": props_without_images,
+            "recent": [
+                {
+                    "id": str(p.id),
+                    "code": p.code,
+                    "title": p.title,
+                    "status": p.status.value,
+                    "operation": p.operation.value,
+                    "created_at": p.created_at.isoformat(),
+                }
+                for p in recent_properties
+            ],
+        },
+        "leads": {
+            "total": total_leads,
+            "by_status": leads_by_status,
+        },
+        "appointments": {
+            "total": total_appointments,
+            "by_status": appointments_by_status,
+            "upcoming": [format_appt(a) for a in upcoming_appts],
+            "today": [format_appt(a) for a in todays_appts],
+        },
+        "conversations": {
+            "total": total_conversations,
+            "recent": [
+                {
+                    "id": str(c.id),
+                    "user_id": c.user_id,
+                    "summary": c.summary,
+                    "updated_at": c.updated_at.isoformat(),
+                }
+                for c in recent_conversations
+            ],
+        },
+        "activity": [format_activity(e, em, nm) for e, em, nm in recent_activity],
+        "system": {
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    }
+
+
+# ------------------------------------------------------------------ public contact/location info
+@app.get("/contact")
+async def get_contact_info() -> dict:
+    """Public endpoint with official contact information and business hours.
+    
+    No authentication required. Returns structured data for the office location,
+    reference point, and business hours in the business timezone (America/Bogota).
+    """
+    from app.core.bizconfig import get_appointment_hours_for_weekday, get_business_timezone
+    
+    tz = await get_business_timezone()
+    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    
+    hours = {}
+    for day_num in range(7):
+        h_list = await get_appointment_hours_for_weekday(day_num)
+        if h_list:
+            # Detect intervals: group consecutive hours
+            intervals = []
+            start = h_list[0]
+            prev = h_list[0]
+            for h in h_list[1:]:
+                if h == prev + 1:
+                    prev = h
+                else:
+                    intervals.append({"open": f"{start:02d}:00", "close": f"{prev+1:02d}:00"})
+                    start = h
+                    prev = h
+            intervals.append({"open": f"{start:02d}:00", "close": f"{prev+1:02d}:00"})
+            
+            hours[day_names[day_num]] = {
+                "intervals": intervals,
+                "slots": [f"{h:02d}:00" for h in h_list],
+            }
+        else:
+            hours[day_names[day_num]] = {"closed": True}
+    
+    return {
+        "company": {
+            "name": "epresedi Inmobiliaria",
+        },
+        "address": {
+            "street": "Calle 70",
+            "street_number": "# 68A - 11",
+            "neighborhood": "Calazans",
+            "floor": "1er piso",
+            "city": "Carepa",
+            "department": "Antioquia",
+            "country": "Colombia",
+            "reference": "Diagonal a Tiendas Ara",
+            "full_address": "Calle 70 # 68A - 11, Barrio Calazans, 1er piso, Carepa, Antioquia, Colombia",
+        },
+        "timezone": tz,
+        "business_hours": hours,
+        "phone": "",
+        "email": "",
+    }
+
+
 @app.get("/agent/metrics")
 async def agent_metrics(user: AdminUser = Depends(require_permission("settings.read"))) -> dict:
     """Observabilidad del agente: ¿el LLM está actuando realmente como cerebro?

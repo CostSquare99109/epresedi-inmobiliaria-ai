@@ -9,7 +9,7 @@ import {
 } from "../../lib/floors";
 
 const VALID_STATUSES = ["AVAILABLE", "RESERVED", "SOLD", "INACTIVE"] as const;
-const VALID_TYPES = ["casa", "apartamento", "lote", "local", "oficina", "finca", "proyecto"] as const;
+const VALID_TYPES = ["casa", "apartamento"] as const;
 const VALID_OPERATIONS = ["SALE", "RENT"] as const;
 const VALID_SERVICES = ["incluye", "no_incluye"] as const;
 

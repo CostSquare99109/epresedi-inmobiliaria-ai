@@ -162,7 +162,7 @@ def search_decision(text: str, *, phase: str = "PROPERTY_SELECTION", property_co
 
 
 def greeting_decision(text: str | None = None) -> SimpleDecision:
-    default = "¡Hola! Soy el asistente virtual de epresedi. ¿En qué te ayudo hoy?"
+    default = "¡Hola! Soy el asistente virtual de Epresedi. ¿En qué te puedo ayudar?"
     return SimpleDecision(text=text or default, intent="GREETING")
 
 
@@ -695,8 +695,7 @@ def make_flow_agent(*, search_filters: dict | None = None, search_query: str = "
             return tool_round(tc("compare_properties", {"property_refs": codes}, call_id="cp"))
         if u.strip().startswith("hola") and len(u.strip()) <= 24:
             return send_response_round(
-                "¡Hola! Soy epresedi, tu asesor inmobiliario en Urabá. "
-                "¿Buscas comprar, arrendar o agendar una visita?",
+                "¡Hola! Soy el asistente virtual de Epresedi. ¿En qué te puedo ayudar?",
                 intent="GREETING",
             )
         if any(k in u for k in ("busca", "busco", "quiero comprar", "deseo comprar", "comprar una")):

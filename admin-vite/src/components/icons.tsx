@@ -10,6 +10,13 @@ const PATHS = {
       <path d="M9.5 21v-6h5v6" />
     </>
   ),
+  "shopping-bag": (
+    <>
+      <path d="M6.5 3h11a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+      <path d="M12 3v10" />
+      <path d="M9 17v2M15 17v2" />
+    </>
+  ),
   dashboard: (
     <>
       <rect x="3.5" y="3.5" width="7" height="7" rx="1" />
@@ -109,6 +116,24 @@ const PATHS = {
     <>
       <circle cx="12" cy="8" r="3.5" />
       <path d="M5 20v-.8a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v.8" />
+    </>
+  ),
+  "message-square": (
+    <>
+      <path d="M3.5 4h17a2 2 0 0 1 2 2v11.5l-4.5 4.5-2.5-2.5H5.5a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z" />
+    </>
+  ),
+  users: (
+    <>
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </>
+  ),
+  activity: (
+    <>
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
     </>
   ),
   "log-in": (

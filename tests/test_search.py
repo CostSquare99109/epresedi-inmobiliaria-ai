@@ -106,10 +106,17 @@ async def test_city_and_neighborhood_filters(session):
 
 
 async def test_property_type_filters(session):
-    assert "PROP-0010" in await _codes(session, SearchFilters(property_type="lote", limit=20))
-    assert "PROP-0011" in await _codes(session, SearchFilters(property_type="local", limit=20))
-    assert "PROP-0012" in await _codes(session, SearchFilters(property_type="oficina", limit=20))
-    assert "PROP-0013" in await _codes(session, SearchFilters(property_type="finca", limit=20))
+    casas = await _codes(session, SearchFilters(property_type="casa", limit=20))
+    assert "PROP-0001" in casas
+    assert "PROP-0010" in casas
+    assert "PROP-0013" in casas
+    aptos = await _codes(session, SearchFilters(property_type="apartamento", limit=20))
+    assert "PROP-0005" in aptos
+    assert "PROP-0011" in aptos
+    assert "PROP-0012" in aptos
+    # Los tipos eliminados ya no existen en el inventario.
+    for dead in ("lote", "local", "oficina", "finca", "proyecto"):
+        assert await _codes(session, SearchFilters(property_type=dead, limit=20)) == []
 
 
 async def test_search_never_returns_unavailable_properties(session):

@@ -195,11 +195,10 @@ async def test_inventory_covers_required_property_types(session):
     rows = (
         await session.execute(text("SELECT DISTINCT property_type FROM properties"))
     ).scalars().all()
-    for expected in ("casa", "apartamento", "lote", "local", "oficina", "finca"):
+    assert set(rows) <= {"casa", "apartamento"}, f"seed solo admite casa/apartamento: {set(rows)}"
+    for expected in ("casa", "apartamento"):
         assert expected in set(rows), f"seed must cover {expected}"
-    assert {t.value for t in PropertyType} >= {
-        "casa", "apartamento", "lote", "local", "oficina", "finca", "proyecto",
-    }
+    assert {t.value for t in PropertyType} == {"casa", "apartamento"}
 
 
 async def test_inventory_covers_sale_and_rent(session):

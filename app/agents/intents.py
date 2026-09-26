@@ -44,7 +44,7 @@ _DOCQ = r"\b(?:reglamento|reglamentos|norma|normas|manual|documento|documentos|d
 _PRICE = r"\b(?:precio|cuesta|vale|cu[aá]nto cuesta|cu[aá]nto vale|costo|valor)"
 _LOC = r"\b(?:d[oó]nde|donde queda|ubicaci[oó]n|ubicado|direcci[oó]n|mapa|cerca de)"
 _FIN = r"\b(?:financiaci[oó]n|financiar|cr[eé]dito|hipoteca|cuota inicial|subsidio|leasing)"
-_SELL = r"\b(?:vender mi|quiero vender|tengo una (?:casa|apartamento|lote|finca)|publicar mi)"
+_SELL = r"\b(?:vender mi|quiero vender|tengo una (?:casa|apartamento)|publicar mi)"
 _RENTOUT = r"\b(?:alquilar mi|arrendar mi|doy en arriendo|quiero arrendar)"
 _SEARCH_HINTS = r"\b(?:busco|buscar|encu[eé]ntrame|encontrame|muestrame|muestra|quiero ver|tienes|tienen|hay|disponibles?|opciones|describe|detalla|lista)"
 # Single image request patterns: "una imagen", "solo una", "una foto", etc.
@@ -81,11 +81,11 @@ _ATTR_NOUNS = (
 _POSSESS = r"\b(?:tiene|tienen|cuenta con|incluye|trae|viene con|acepta|aceptan|permiten|hay)\b"
 _SINGULAR_REF = (
     r"\b(?:la|el|esa|ese|esta|este|aquel|aquella)\s+"
-    r"(?:casa|casita|apartamento|apto|propiedad|lote|local|oficina|finca|inmueble|"
-    r"penthouse|torre|codigo)\b"
+     r"(?:casa|casita|apartamento|apto|propiedad|inmueble|"
+     r"penthouse|torre|codigo)\b"
 )
 # plural property nouns signal a NEW search ("¿tienen casas con piscina?")
-_PLURAL_TYPE = r"\b(?:casas|apartamentos|aptos|lotes|locales|oficinas|fincas|inmuebles|propiedades)\b"
+_PLURAL_TYPE = r"\b(?:casas|apartamentos|aptos|inmuebles|propiedades)\b"
 
 
 def _deaccent_low(message: str) -> str:
@@ -129,7 +129,7 @@ def detect_intent(message: str) -> Intent:
     # Check for explicit search criteria (operation, property type, budget, location)
     # These indicate a NEW search, not a follow-up on current property
     has_operation = bool(re.search(r"\b(arriendo|alquiler|alquilar|arrendar|venta|comprar|comprar)\b", low))
-    has_property_type = bool(re.search(r"\b(casa|apartamento|apto|lote|local|oficina|finca)\b", low))
+    has_property_type = bool(re.search(r"\b(casa|apartamento|apto)\b", low))
     has_budget = bool(re.search(r"\b(\d+\s*(?:millones?|palos?|k|mil)|un\s+mill[oó]n|dos\s+millones?|tres\s+millones?|cuatro\s+millones?|cinco\s+millones?)\b", low))
     has_location = bool(re.search(r"\b(en|cerca de|zona|barrio|ciudad)\b", low))
     has_rooms = bool(re.search(r"\b(\d+\s*hab|habitaciones?|alcobas?|cuartos?)\b", low))
@@ -210,8 +210,8 @@ def detect_intent(message: str) -> Intent:
     has_search_hint = bool(re.search(_SEARCH_HINTS, low))
     has_criteria = bool(
         re.search(
-            r"(\d+\s*(?:millones?|hab|habitaciones)|casa|apartamento|lote|local|oficina|finca|"
-            r"garaje|parqueadero|banos|m2|metros)",
+            r"(\d+\s*(?:millones?|hab|habitaciones)|casa|apartamento|"
+             r"garaje|parqueadero|banos|m2|metros)",
             low,
         )
     )

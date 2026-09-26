@@ -7,22 +7,28 @@ interface MetricCardProps {
   hint?: string;
   tone?: "success" | "warn" | "danger" | "neutral";
   icon?: IconName;
-  href?: string;
+  to?: string;
 }
 
-export function MetricCard({ title, value, hint, tone = "neutral", icon, href }: MetricCardProps) {
+export function MetricCard({ title, value, hint, tone = "neutral", icon, to }: MetricCardProps) {
   const className = `stat-card tone-${tone}`;
   const content = (
     <>
-      {icon && <Icon name={icon} size={18} />}
-      <span className="stat-v">{value}</span>
-      <span className="stat-l">{title}</span>
-      {hint && <span className="stat-hint">{hint}</span>}
+      {icon && (
+        <span className={`stat-icon tone-${tone}`} aria-hidden="true">
+          <Icon name={icon} size={20} />
+        </span>
+      )}
+      <span className="stat-text">
+        <span className="stat-v">{value}</span>
+        <span className="stat-l">{title}</span>
+        {hint && <span className="stat-hint">{hint}</span>}
+      </span>
     </>
   );
-  if (href) {
+  if (to) {
     return (
-      <Link className={className} to={href}>
+      <Link className={className} to={to}>
         {content}
       </Link>
     );

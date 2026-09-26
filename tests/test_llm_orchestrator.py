@@ -214,7 +214,7 @@ async def test_batched_send_response_reasks_with_real_results(session, user_id):
             send_response_round("Ahora sí: encontré casas en Carepa.")
             if any("BATCHED_TERMINAL_CALL" in (m.get("content") or "") for m in messages
                    if m.get("role") == "tool")
-            else plain_text("lote no detectado")
+            else plain_text("batch no detectado")
         ),
     ])
     orch = Orchestrator(llm=fake)
@@ -272,14 +272,14 @@ async def test_consecutive_zero_result_searches_trigger_loop_protection(session,
     from app.agents.orchestrator import Orchestrator
 
     METRICS.reset()
-    impossible = {"filters": {"city": "CiudadInexistente999", "property_type": "lote"}}
+    impossible = {"filters": {"city": "CiudadInexistente999", "property_type": "casa"}}
     fake = FakeLLMV2([
         tool_round(tc("search_properties", impossible, call_id="c1")),
         tool_round(tc("search_properties", impossible, call_id="c2")),
         plain_text("No hay coincidencias. ¿Quieres ampliar criterios o crear una alerta?"),
     ])
     orch = Orchestrator(llm=fake)
-    reply = await orch.handle_user_message(session, user_id, "lotes en CiudadInexistente999", "t", "T")
+    reply = await orch.handle_user_message(session, user_id, "casas en CiudadInexistente999", "t", "T")
 
     assert "No hay coincidencias" in reply.text
     snap = METRICS.snapshot()["counters"]

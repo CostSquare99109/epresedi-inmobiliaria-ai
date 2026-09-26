@@ -4,187 +4,138 @@
 
 | Task | Command |
 |------|---------|
-| Run app (bot + API + workers) | `python main.py` |
-| Run tests (isolated DB) | `python -m pytest tests/ -q` |
+| Run app (bot + API + workers) | `python main.py` (requires NVIDIA creds, see below) |
+| Run tests (isolated DB) | `python -m pytest tests/ -q` (~436 tests, ~2.5 min) |
 | Run single test file | `python -m pytest tests/test_agent.py -q` |
-| Run with coverage | `python -m pytest tests/ --cov=app` |
-| Lint (Ruff) | `ruff check .` |
-| Migrations | `python -m alembic upgrade head` |
+| Lint (Ruff, line-length 110) | `ruff check .` (⚠ pre-existing findings, see Lint) |
+| Migrations | `python -m alembic upgrade head` (main.py runs them on boot) |
 | Create migration | `python -m alembic revision --autogenerate -m "name"` |
 | Seed dev data (destructive) | `python -m scripts.seed` |
-| Ingest documents | `python -m scripts.ingest` |
+| Ingest documents (`documents/inbox/`) | `python -m scripts.ingest` |
 | Environment doctor | `python -m scripts.doctor` |
-| Create admin user | `python -m scripts.create_admin` |
-| Admin panel dev | `cd admin && npm run dev` |
-| Admin panel typecheck | `cd admin && npm run typecheck` |
-| Start infra (Postgres + Redis) | `pg_ctl -D ~/pgdata-inmob start && redis-server --daemonize yes` |
+| Create admin user (RBAC) | `python -m scripts.create_admin email@x.com "Nombre" pass [rol]` |
+| Sync filesystem images → PropertyImage table | `python -m scripts.sync_images` |
+| Admin panel dev | `cd admin-vite && npm run dev` (Vite on :3000, needs backend on :8000) |
+| Admin panel typecheck | `cd admin-vite && npm run typecheck` |
+| Admin panel node tests | `cd admin-vite && npm run test:client \|\| npm run test:floors` |
+| Start infra manually | `pg_ctl -D ./pgdata start && redis-server --daemonize yes` |
 
 ## Project Structure
 
 ```
-epresedi-inmobiliaria-ai/
-├── main.py                 # Single entry point (composition root)
-├── alembic.ini             # Alembic config (DATABASE_URL from .env)
-├── pyproject.toml          # Python project config (pytest, ruff)
-├── requirements.txt        # Python deps
-├── .env.example            # Config template (copy to .env)
-├── app/                    # Application packages (all logic here)
-│   ├── agents/             # Orchestrator + agent tools
-│   ├── ai/                 # LLM/embedding providers (NVIDIA + fallbacks)
-│   ├── api/                # FastAPI routes
-│   ├── appointments/       # Citas/agenda
-│   ├── bot/                # Telegram handlers + keyboards
-│   ├── core/               # Settings, logging
-│   ├── crm/                # Leads, conversaciones
-│   ├── database/           # SQLAlchemy models, session, engines
-│   ├── memory/             # Conversation memory
-│   ├── properties/         # Property search, filters
-│   ├── rag/                # Document ingestion, chunking, retrieval
-│   ├── security/           # Prompt injection, SQLi, path traversal defenses
-│   └── workers/            # Background queue + scheduler
-├── migrations/             # Alembic versions
-├── scripts/
-│   ├── doctor.py           # Environment health checks
-│   ├── seed.py             # Dev/test data (DESTRUCTIVE)
-│   ├── ingest.py           # RAG document ingestion
-│   └── create_admin.py     # Admin user creation
-├── docs/                   # Technical docs (architecture, rag, ai, etc.)
-├── admin/                  # Next.js admin panel (separate npm project)
-├── storage/                # File uploads (gitignored)
-├── documents/              # RAG inbox + processed (gitignored)
-└── tests/                  # ~270 tests, isolated DB (inmobiliaria_test)
+main.py                 # Single entry point (composition root only)
+app/
+├── agents/             # orchestrator.py (facade) → runtime.py (agentic loop) + llm_orchestrator.py
+│                       #   tools.py, tool_specs.py, prompts_v2.py (active prompt), websearch.py (DDG, no key)
+├── ai/                 # LLMProvider / EmbeddingProvider abstractions (NVIDIA + local hash)
+├── api/                # routes.py (all FastAPI endpoints) + files.py (uploads/images)
+├── appointments/       # service.py: business hours + slot validation live here
+├── bot/                # Telegram handlers, keyboards, progress.py (RetryAfter-safe edits)
+├── core/               # settings.py (all env), bizconfig.py (DB-backed business settings)
+├── crm/  memory/       # leads/conversaciones; conversation memory
+├── database/           # models.py, base.py (engines), migrations/
+├── properties/ rag/    # search/filters; ingestion, chunking, retrieval
+├── security/           # auth.py (JWT+RBAC), prompt-injection/SQLi/path-traversal defenses
+└── workers/            # queue.py (Redis + in-memory fallback), runner.py (jobs + scheduler)
+admin-vite/             # Admin panel: Vite + React 19 + TS (NOT Next.js anymore)
+scripts/                # doctor, seed (destructive), ingest, create_admin, sync_images
+docs/                   # Technical docs (⚠ admin-panel.md still describes the old Next.js panel)
+tests/                  # conftest.py pins env before any app.* import
 ```
 
 ## Key Architecture Facts
 
-- **Single entry point**: `main.py` boots everything (config → logging → infra checks → migrations → pgvector → services → bot → API → workers → scheduler). Do not add other entry points.
-- **Local-first**: PostgreSQL (pgvector), Redis, RAG, CRM, admin panel all run locally. Only external dependency is NVIDIA Build API for LLM/embeddings.
-- **LLM-FIRST / TOOL-DRIVEN / DETERMINISTIC-SAFETY**: with NVIDIA configured (`LLM_MODE=auto|nvidia`), the LLM is the brain of every turn: it interprets natural language, decides and chains tools (`app/agents/llm_orchestrator.py`), reasons over results and writes the reply. `app/agents/orchestrator.py` is the entry point and keeps the deterministic pipeline as a per-turn failsafe.
-- **Deterministic mode**: without `NVIDIA_API_KEY` + `NVIDIA_MODEL` (or `LLM_MODE=deterministic`), the deterministic pipeline IS the brain — structured search, reference resolution, document extraction, no LLM calls. It also runs as fallback whenever the provider fails, the loop exhausts its rounds, or the reply asserts an unverified fact. This is intentional.
-- **Backend validates, tools execute, DB confirms reality**: the LLM never touches PostgreSQL. Critical validation (state, availability, permissions, money, dates) stays in code.
-- **Provider abstraction**: `LLMProvider` / `EmbeddingProvider` interfaces; `NVIDIAProvider` is one implementation, `LLMProviderChain` orders providers. Swapping vendors doesn't touch app logic.
-- **pgvector dimension**: Must match `EMBEDDING_DIM` in `.env` (2048 for NVIDIA embeddings, 256 for local). Changing requires migration + re-embedding.
-- **Admin token**: `ADMIN_TOKEN` from root `.env` is copied to `admin/.env.local` at build time (server-side only, never exposed to browser).
-- **Agent observability**: `GET /agent/metrics` (permission `settings.read`) exposes `llm_usage_rate`, `llm_success_rate`, `fallback_rate`, `tool_call_rate`, `rag_usage_rate`, `average_tool_calls_per_turn`.
+- **Single entry point**: `main.py` boots config → logging → infra autostart → migrations → pgvector check → services → bot (if token) → API `:8000` → workers → scheduler (hourly). Do not add other entry points.
+- **LLM is mandatory at boot**: `main.py` raises `RuntimeError` if no LLM provider is configured. `LLM_MODE=deterministic` no longer boots the app (there is no full deterministic-brain path anymore). Deterministic pieces survive only as: unit-test mode (conftest pins it) and a **per-turn failsafe** — if the LLM dies mid-turn, the reply is built from real tool evidence (`build_degraded_reply`, metrics `degraded_replies`/`llm_fallbacks`).
+- **Orchestrator**: `app/agents/orchestrator.py` is a thin facade; the agent loop is `runtime.py` (LLM → tools → LLM → ...) and turn bootstrap/persistence/audit is `llm_orchestrator.py`. The active system prompt is `prompts_v2.py` (`prompts.py` is legacy, still regression-tested).
+- **Backend validates, LLM never invents reality**: critical validation (state, availability, money, dates, business hours) stays in code. Recent hard invariants (regression-tested): price fallback searches real +30% and reports it transparently; the LLM may not invent `max_price`/`min_price`; nearest-property ranking is computed in code, never by the LLM.
+- **Admin auth is JWT + RBAC**: login `POST /auth/login` sets httponly cookie `admin_access_token`; roles `superadmin|admin|editor|asesor` (`app/security/auth.py`, `JWT_SECRET` in `.env`). Legacy `X-Admin-Token`/`ADMIN_TOKEN` copy-to-panel flow was **removed** (`ADMIN_TOKEN` lingers unused in settings).
+- **Worker jobs**: `document_ingestion, process_document, evaluate_alerts, notify, cleanup` (`app/workers/runner.py`). Property alerts = `SavedSearch` entries evaluated by `evaluate_alerts`, then Telegram notifications.
+- **pgvector dimension** must match `EMBEDDING_DIM` in `.env` (2048 NVIDIA / 256 local). Changing it requires migration + re-embedding.
+- **Agent observability**: `GET /agent/metrics` (permission-gated) exposes `llm_usage_rate`, `llm_success_rate`, `fallback_rate`, `tool_call_rate`, `rag_usage_rate`, etc.
+- Local-first: only external dependencies are NVIDIA Build API and Telegram.
+
+## Language & Behavior Conventions
+
+- All user-facing text, prompts, logs and docstrings are **Spanish**. Keep it that way.
+- Brand is **"epresedi"** (lowercase, never "Expresedi"/"EXPRESEDI") — enforced by `tests/test_brand_name_regression.py`.
+- Prompt behavior is regression-tested: brand name, greeting policy (`tests/test_greeting_policy.py`), official address + business hours (`tests/test_official_address_and_hours.py`). Editing `prompts_v2.py` or `bizconfig.py` defaults without updating these tests will fail the suite.
 
 ## Environment & Config
 
-- All config in `.env` (copy from `.env.example`). Never commit real `.env`.
+- All config in `.env` (copy from `.env.example`); everything loads through `app/core/settings.py` (`get_settings()` is `lru_cache`d — env changes after import don't apply).
+- `LLM_MODE=auto|nvidia|deterministic`: `auto` = LLM-first when NVIDIA configured; `nvidia` = force (fails without creds); `deterministic` = **tests only** — booting `main.py` in this mode fails.
+- `DATABASE_URL` (dev) and `TEST_DATABASE_URL` are separate; tests use the latter (`inmobiliaria_test`).
+- `PGDATA=./pgdata` (repo-local, gitignored). `main.py` auto-starts Postgres from `PGDATA` or `~/pgdata-inmob` and Redis if binaries are in PATH and ports 5432/6379 are free.
+- `WEB_SEARCH_ENABLED` gates the DDG-based web search tool (no API key needed).
 - `APP_ENV=production` blocks `scripts.seed` unless `SEED_ALLOW_PRODUCTION=1`.
-- `LLM_MODE=auto|nvidia|deterministic` controls LLM behavior. `auto` means **LLM-first** (the model orchestrates every turn); deterministic is the per-turn failsafe.
-- `LLM_PROVIDERS=nvidia` orders the provider chain (first healthy provider wins).
-- `EMBEDDING_PROVIDER=auto|nvidia|local` controls embeddings.
-- `DATABASE_URL` and `TEST_DATABASE_URL` are separate; tests use the latter.
-- `PGDATA` used by `main.py` to auto-start local Postgres (Termux convenience).
 
-### LLM Configuration
+### LLM knobs (defaults in `app/core/settings.py`)
 
 | Variable | Default | Description |
 |---|---|---|
 | `LLM_TEMPERATURE` | `0.2` | Sampling temperature |
 | `LLM_MAX_TOKENS` | `4000` | Max output tokens |
-| `LLM_REASONING_LEVEL` | `high` | Reasoning effort: `high`, `medium`, `low`, `minimal`, `none` (ignored if unsupported) |
-| `LLM_MAX_TOOL_ROUNDS` | `4` | Max tool-calling rounds per turn |
-| `LLM_MAX_TOOL_CALLS_PER_TURN` | `8` | Max tool calls per turn |
+| `LLM_REASONING_LEVEL` | `high` | `high/medium/low/minimal/none`; ignored if model lacks `reasoning_effort` (log: `reasoning_level_invalid`) |
+| `LLM_MAX_TOOL_ROUNDS` | `4` | Tool-calling rounds per turn |
+| `LLM_MAX_TOOL_CALLS_PER_TURN` | `8` | Tool calls per turn |
 | `LLM_HISTORY_TURNS` | `8` | History turns in context |
-| `LLM_TOOL_RESULT_MAX_CHARS` | `4000` | Max chars per tool result in context |
-| `LLM_RETRY_MAX` | `3` | Max LLM call retries |
+| `LLM_TOOL_RESULT_MAX_CHARS` | `4000` | Max chars per tool result |
+| `LLM_RETRY_MAX` | `3` | LLM call retries |
 
 ## Testing Conventions
 
-- ~270 tests across 18 files: database, search, RAG, agent, LLM orchestrator, agent loop, CRM, appointments, security, API, E2E, Telegram, websearch, retry, fake LLM v2, partial failure.
-- Tests use isolated `inmobiliaria_test` DB (see `tests/conftest.py`).
-- Embeddings use local deterministic provider; never call NVIDIA or Telegram in tests.
-- Run full suite: `python -m pytest tests/ -q`
-- If tests hang: close other pytest sessions against same test DB (table locks).
-- Test bootstrap in `tests/conftest.py` pins env vars before any `app.*` import.
+- ~436 tests in 24 files; pytest `asyncio_mode = "auto"` (no `@pytest.mark.asyncio` needed).
+- `tests/conftest.py` pins env vars **before any `app.*` import** (LLM off, local embeddings, test storage/documents dirs). It creates the test DB if missing, runs migrations, and runs `scripts.seed` **destructively once per session**.
+- RBAC test users are auto-created: `{role}@test.local` / `test-password-123`; use the `admin_token` fixture (`admin_token('superadmin')` → Bearer headers).
+- High-level fixtures: `ask` (sends NL through the agent with `FakeLLMV2`), `user_id` (unique Telegram id), `session`, `property_by_code`.
+- Never call NVIDIA or Telegram in tests. Embeddings use the local hash provider.
+- If tests hang: another pytest session is locking the test DB — close it.
+
+## Lint
+
+- Only config is `line-length = 110` (`pyproject.toml`). Ruff ≥ 0.16 expanded its default rule set, so `ruff check .` currently reports **~290 pre-existing findings** (B008 `Depends(...)`, BLE001, I001, F821 in WIP CMS code, …). Don't treat it as a pass/fail gate and don't mass-fix it as part of unrelated tasks; do keep new files clean (`ruff check <file>`).
+- `admin-vite`: `npm run typecheck` and `npm run test:client` pass; `npm run test:floors` has **3 pre-existing display-label failures**; `npm run lint` is broken (no eslint flat config in `admin-vite/`).
 
 ## Common Gotchas
 
 | Issue | Cause / Fix |
 |-------|-------------|
-| `pgvector no instalado` | Compile manually (Termux: see `docs/local-development.md`) |
-| `PostgreSQL no accesible` | `pg_ctl start`; verify `DATABASE_URL` |
-| `NVIDIA API ERROR` | Check `NVIDIA_API_KEY`/`NVIDIA_MODEL`; bot still works in deterministic mode |
-| Bot doesn't respond | Verify `TELEGRAM_BOT_TOKEN` and that `main.py` is running; check logs |
-| 401 in admin panel | Copy `ADMIN_TOKEN` from root `.env` to `admin/.env.local` |
-| Seed refuses to run | `APP_ENV=production` blocks it; use dev DB or export `SEED_ALLOW_PRODUCTION=1` |
-| Progress message not updating | Check `TELEGRAM_BOT_TOKEN` and rate limits; `RetryAfter` is handled with backoff |
-| Reasoning level not working | Model must support `reasoning_effort` (NVIDIA Build compatible models); check logs for `reasoning_level_invalid` |
-| Auto-start fails on Termux | `main.py` tries `pg_ctl`/`redis-server` if ports 5432/6379 are free; ensure they're in PATH |
-| Diagnose env issues | Run `python -m scripts.doctor` (checks Python, Postgres, Redis, pgvector, NVIDIA, schema, storage, RAG) |
+| Boot fails: "LLM provider not configured" | `main.py` hard-requires `NVIDIA_API_KEY` + `NVIDIA_MODEL`. Deterministic boot no longer exists. |
+| `pgvector no instalado` | Compile manually on Termux (`docs/local-development.md`); `main.py` checks the extension on boot. |
+| CMS endpoints NameError (`CmsContent`) | `app/api/routes.py` CMS endpoints are WIP: the model is used but not imported. Not covered by tests. Don't assume they work; fix the import if touching them. |
+| 401 in admin panel | Log in via the panel (`POST /auth/login`); create the first user with `python -m scripts.create_admin ...`. `ADMIN_TOKEN` copying is legacy, gone. |
+| Admin panel can't reach API | Vite dev server proxies `/api` → `127.0.0.1:8000`; the backend (`python main.py`) must be running. |
+| Bot doesn't respond | Verify `TELEGRAM_BOT_TOKEN` and that `main.py` is running; without a token, main.py intentionally starts API+workers only (warning in log). |
+| Tests hang | Another pytest session holds locks on `inmobiliaria_test` — close it. |
+| Progress message not updating | Telegram rate limits; `RetryAfter` is handled with backoff in `app/bot/progress.py`. |
+| Diagnose env issues | `python -m scripts.doctor` (Python, Postgres, Redis, pgvector, schema, NVIDIA, Telegram, storage, RAG). |
 
 ## Migration Workflow
 
 1. Modify models in `app/database/models.py`
 2. `python -m alembic revision --autogenerate -m "description"`
-3. Review generated file in `migrations/versions/`
-4. `python -m alembic upgrade head`
-5. `main.py` runs migrations automatically on boot
+3. Review the generated file in `migrations/versions/`
+4. `python -m alembic upgrade head` (also runs automatically on every `main.py` boot)
 
 ## RAG Pipeline
 
-`documents/inbox/` → `python -m scripts.ingest` → validate → hash/dedupe → parse (PDF/DOCX/TXT/MD) → clean → chunk (sections + overlap) → embeddings → pgvector. Each chunk stores full traceability (`document_id`, `page`, `section`, `chunk_hash`, `embedding_version`). Document updates create new versions without breaking index.
-
-## Development Notes
-
-- Ruff line-length: 110 (from `pyproject.toml`)
-- Python ≥ 3.11 required (tested on 3.14)
-- Async throughout (FastAPI, python-telegram-bot v22, SQLAlchemy 2.0 async)
-- Worker queue: Redis-backed with in-memory fallback (see `app/workers/queue.py`)
-- Scheduler runs hourly by default (document ingestion re-check)
-- `main.py` auto-starts local Postgres/Redis if `pg_ctl`/`redis-server` are in PATH and ports 5432/6379 are free (Termux/native convenience)
+`documents/inbox/` → `python -m scripts.ingest` (or `POST /documents`, or admin panel) → validate → hash/dedupe → parse (PDF/DOCX/TXT/MD) → clean → chunk (sections + overlap) → embeddings → pgvector. Chunks keep full traceability (`document_id`, `page`, `section`, `chunk_hash`, `embedding_version`); document updates create new versions without breaking the index.
 
 ## Appointment Scheduling Rules
 
-**Business Hours (source of truth: `app/core/bizconfig.py`)**
+**Source of truth: `app/core/bizconfig.py`** — hours are stored in the `app_settings` DB table (30s TTL cache) with code defaults; admins can change them via `PUT /settings`.
 
-| Day | Allowed Hours | Slots (start times) |
-|-----|---------------|---------------------|
-| Monday–Friday | 08:00–18:00 | 08:00, 09:00, 10:00, 11:00, 12:00, 13:00, 14:00, 15:00, 16:00, 17:00 |
-| Saturday | 09:00–15:00 | 09:00, 10:00, 11:00, 12:00, 13:00, 14:00 |
-| Sunday | CLOSED | — |
+| Day | Slots (hourly start times) |
+|-----|---------------------------|
+| Mon–Fri | 08:00–12:00 **and** 14:00–18:00 (lunch break: no 12:00/13:00 slots) |
+| Saturday | 08:00–15:00 (slots 08:00–14:00) |
+| Sunday | CLOSED |
 
-**Key Points:**
-- Slots are hourly. The last slot starts at 17:00 (Mon–Fri) or 14:00 (Sat) and ends at 18:00 or 15:00 respectively.
-- Timezone: `America/Bogota` (configurable via `timezone` setting).
-- Minimum advance notice: 2 hours from current time.
-
-**Three Categories of Validation (defense in depth):**
-
-| Category | Description | Backend Behavior | Agent Response |
-|----------|-------------|------------------|----------------|
-| **A. Allowed & Available** | Within business hours AND slot free | `list_available_slots` returns `exact_match=true` | Confirm and proceed to `schedule_visit` |
-| **B. Not Allowed** | Outside business hours (Sun, before/after hours) | `is_within_business_hours` returns `False` | Reject immediately, explain business hours, ask for new time |
-| **C. Allowed but Booked** | Within business hours BUT slot occupied | `list_available_slots` returns `exact_match=false` + `nearest_slots` | Inform specific slot unavailable, offer real alternatives from `nearest_slots` |
-
-**Backend Validation (Capa 2 — Tool/Service):**
-- `app/core/bizconfig.py`: `is_within_business_hours()`, `get_appointment_hours_for_weekday()`, `is_business_day()`
-- `app/appointments/service.py`: `validate_business_hours()` called in `create_appointment()` and `reschedule_appointment()`
-- `app/agents/tools.py`: `_validate_real_slot()` checks business hours first (returns `reason="business_hours"`), then availability (returns `reason="booked"`)
-
-**Agent Flow (Capa 1 — LLM Prompt):**
-1. **FASE A**: User wants to schedule but no date/time → ask "¿Qué día y hora? Horarios: lun–vie 8–18, sáb 9–15, dom cerrado"
-2. **FASE B**: User gives date/time → resolve relative dates using system time (UTC provided in context)
-3. **FASE C**: Call `list_available_slots` with `requested_datetime` (ISO in business TZ)
-4. **FASE D**: If `exact_match=false` → offer `nearest_slots` only
-5. **FASE E–F**: Negotiate alternatives, only `schedule_visit` on explicit acceptance
-6. **FASE G**: Confirm only if tool returns `appointment` object
-
-**Tests:** 32 tests in `tests/test_appointments.py` covering all 18 requirement cases + integration.
+- Timezone `America/Bogota` (configurable via the `timezone` setting). Minimum advance notice: 2 hours (`app/appointments/service.py`).
+- Validation is layered: `bizconfig.is_within_business_hours()` → `appointments/service.validate_business_hours()` (called by create/reschedule) → `app/agents/tools.py:_validate_real_slot()` (returns `reason="business_hours"` before checking occupancy, then `reason="booked"`).
+- Agent contract: always validate a requested slot via the `list_available_slots` tool; if `exact_match=false`, offer only real `nearest_slots`; only call `schedule_visit` after explicit user acceptance; confirm only if the tool returns an `appointment` object. 40 tests in `tests/test_appointments.py` + official-hours tests pin this behavior.
 
 ## Documentation
 
-Technical docs in `docs/`:
-- `architecture.md` — layers, flow, decisions
-- `database.md` — schema, indexes, migrations
-- `rag.md` — pipeline, chunking, versioning, anti-injection
-- `ai.md` — LLM/embedding providers, fallbacks, anti-hallucination
-- `agent-tools.md` — tool-calling flow
-- `telegram.md` — handlers, keyboards, UX
-- `local-development.md` — native environment, scripts
-- `testing.md` — suite coverage
-- `security.md` — file security, rate limiting, privacy
-- `admin-panel.md` — admin architecture, components, tokens
-- `data-audit.md` — demo data isolation dev/test/prod
-- `troubleshooting.md` — common problems
+Technical docs in `docs/`: `architecture.md`, `database.md`, `rag.md`, `ai.md`, `agent-tools.md`, `telegram.md`, `local-development.md`, `testing.md`, `security.md`, `data-audit.md`, `troubleshooting.md`. Note: `docs/admin-panel.md` still documents the pre-Vite Next.js panel — treat `admin-vite/` code as the truth. Root-level `AUDITORIA_*.md` / `*_AUDIT.md` / `*REPORT*.md` files are historical audit artifacts, not current specs.
